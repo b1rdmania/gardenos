@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>GardenOS — Trial 01 · Ecological Time</title>
+<style>
+  html,body{margin:0;height:100%;background:#05060a;overflow:hidden;
+    font-family:-apple-system,Inter,system-ui,sans-serif;color:#e8e4dc}
+  #hud{position:fixed;left:18px;bottom:16px;z-index:10;
+    font-size:12px;letter-spacing:.04em;line-height:1.5;
+    text-shadow:0 1px 8px rgba(0,0,0,.8);pointer-events:none;opacity:.85}
+  #hud b{font-weight:600}
+  #season{font-size:11px;text-transform:uppercase;letter-spacing:.22em;opacity:.6}
+  #title{position:fixed;right:18px;top:16px;z-index:10;text-align:right;
+    font-size:11px;letter-spacing:.18em;text-transform:uppercase;opacity:.45;
+    text-shadow:0 1px 8px rgba(0,0,0,.8)}
+</style>
+</head>
+<body>
+<div id="title">GardenOS · Trial 01<br><span style="opacity:.6">ecological time</span></div>
+<div id="hud">
+  <div id="season">winter</div>
+  <div>day <b id="day">0</b> / 365 · year <b id="year">1</b></div>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/p5@1.9.4/lib/p5.min.js"></script>
+<script>
+/* ───────────────────────────────────────────────────────────────
+   GardenOS — Trial 01
+   The artwork is not the flower. It is what the flower DOES over a
+   year, rendered as light rather than image.
+
+   Five "species", each a different VERB:
+     tulip     -> colour field   (emerges, blooms hot, is absorbed)
+     allium    -> expanding ring (a pulse of structure)
+     foxglove  -> vertical spire (grows upward, sheds downward)
+     hosta     -> shadow mass    (a cool absence that swells in shade)
+     poppy     -> brief ignition (short, violent, gone)
+   This is the whole hypothesis: can you READ the species from its
+   behaviour, with no representational drawing at all?
+   ─────────────────────────────────────────────────────────────── */
+
+const YEAR = 365;
+const DAYS_PER_SEC = 9;          // ~40s per year
+let day = 0, year = 1;
+let plants = [];
+
+// seasonal ground tint — the canvas itself breathes with the year
+const SEASONS = [
+  {name:'winter', t:0,   col:[10,14,24]},
+  {name:'spring', t:80,  col:[14,26,22]},
+  {name:'summer', t:172, col:[20,22,14]},
+  {name:'autumn', t:264, col:[26,16,12]},
+  {name:'winter', t:340, col:[10,14,24]},
+];
+
+function lerpCol(a,b,t){return [a[0]+(b[0]-a[0])*t,a[1]+(b[1]-a[1])*t,a[2]+(b[2]-a[2])*t];}
+function groundColour(d){
+  for(let i=0;i<SEASONS.length-1;i++){
+    const s=SEASONS[i],e=SEASONS[i+1];
+    if(d>=s.t && d<e.t){return lerpCol(s.col,e.col,(d-s.t)/(e.t-s.t));}
+  }
+  return SEASONS[SEASONS.length-1].col;
+}
+
+// bloom envelope: 0 before, ramps to 1 at peak, decays after, then 0
+function envelope(d, start, peak, end){
+  if(d<start || d>end) return 0;
+  if(d<peak) return easeOut((d-start)/(peak-start));
+  return 1 - easeIn((d-peak)/(end-peak));
+}
+const easeOut = t => 1-Math.pow(1-t,3);
+const easeIn  = t => t*t*t;
+
+function makeGarden(){
+  plants = [];
+  const add=(species,opts)=>plants.push(Object.assign({species},opts));
+  // hand-placed so each behaviour has room to be read
+  add('tulip',   {x:.20,y:.62,start:60, peak:92, end:130, pal:[[230,60,70],[250,200,60]], r:90});
+  add('tulip',   {x:.30,y:.70,start:66, peak:98, end:134, pal:[[240,90,140],[255,180,90]], r:78});
+  add('allium',  {x:.52,y:.40,start:120,peak:150,end:190, pal:[[150,90,230]], r:150});
+  add('allium',  {x:.66,y:.55,start:128,peak:158,end:196, pal:[[120,110,240]], r:130});
+  add('foxglove',{x:.80,y:.78,start:140,peak:175,end:215, pal:[[230,120,200]], r:60});
+  add('foxglove',{x:.86,y:.80,start:150,peak:185,end:222, pal:[[210,100,210]], r:54});
+  add('hosta',   {x:.42,y:.80,start:90, peak:200,end:300, pal:[[30,60,80]],   r:170});
+  add('hosta',   {x:.12,y:.84,start:96, peak:205,end:305, pal:[[36,70,90]],   r:150});
+  add('poppy',   {x:.60,y:.30,start:165,peak:172,end:188, pal:[[255,60,40]],  r:64});
+  add('poppy',   {x:.72,y:.24,start:170,peak:177,end:194, pal:[[255,90,30]],  r:56});
+}
+
+function setup(){
+  createCanvas(windowWidth,windowHeight);
+  makeGarden();
+  noStroke();
+  background(5,6,10);
+}
+
+function windowResized(){resizeCanvas(windowWidth,windowHeight);}
+
+function draw(){
+  day += DAYS_PER_SEC/ frameRateSafe();
+  if(day>=YEAR){day-=YEAR; year++;}
+  const d = day;
+
+  // ground: long feedback trails so motion leaves an ecological memory
+  const g = groundColour(d);
+  blendMode(BLEND);
+  fill(g[0],g[1],g[2], 26);          // low alpha => slow-decaying trails
+  rect(0,0,width,height);
+
+  // plants render additively => overlapping life becomes light, not paint
+  blendMode(ADD);
+  for(const p of plants){
+    const e = envelope(d,p.start,p.peak,p.end);
+    if(e<=0.001) continue;
+    drawBehaviour(p,e,d);
+  }
+
+  updateHUD(d);
+}
+
+let _lastFr = 60;
+function frameRateSafe(){const f=frameRate(); _lastFr = f>1?f:_lastFr; return _lastFr;}
+
+function drawBehaviour(p,e,d){
+  const cx=p.x*width, cy=p.y*height;
+  const col=p.pal[0];
+
+  if(p.species==='tulip'){
+    // soft radial colour field, palette shifts green->bloom->gold as it ages
+    const phase = constrain((d-p.start)/(p.end-p.start),0,1);
+    const c = phase<0.5 ? lerpCol([40,120,60],p.pal[0],phase*2)
+                        : lerpCol(p.pal[0],p.pal[1]||p.pal[0],(phase-0.5)*2);
+    gauss(cx,cy,p.r*(0.6+0.4*e),c, 90*e*e);
+  }
+
+  else if(p.species==='allium'){
+    // a structural pulse: bright expanding ring
+    const rr = p.r*(0.2+1.0*e);
+    push(); blendMode(ADD); noFill();
+    for(let k=0;k<3;k++){
+      stroke(col[0],col[1],col[2], 60*e*(1-k*0.28));
+      strokeWeight(3-k);
+      circle(cx,cy, rr*2*(1-k*0.12));
+    }
+    pop();
+    gauss(cx,cy,p.r*0.35,col,70*e);
+  }
+
+  else if(p.species==='foxglove'){
+    // vertical spire: column of light that grows up then sheds down
+    const h=p.r*2.4*e;
+    for(let i=0;i<14;i++){
+      const t=i/13;
+      const yy=cy - h*t;
+      const a = 80*e*(1-t)* (0.5+0.5*Math.sin(t*9 - d*0.4)); // travelling bloom up the stalk
+      gauss(cx + Math.sin(t*5+d*0.05)*6, yy, p.r*0.22*(1-t*0.4), col, Math.max(0,a));
+    }
+  }
+
+  else if(p.species==='hosta'){
+    // shadow mass: a COOL field — it removes warmth rather than adding bloom.
+    // rendered as a low cool glow that reads as a swelling cool absence.
+    push(); blendMode(BLEND);
+    const a=70*e;
+    for(let k=3;k>=1;k--){
+      fill(col[0],col[1],col[2], a*0.5/k);
+      circle(cx,cy, p.r*(0.7+0.5*e)*k*0.7);
+    }
+    pop();
+  }
+
+  else if(p.species==='poppy'){
+    // brief ignition: short, hot, then a fading scar
+    const flare = Math.pow(e,0.5);
+    gauss(cx,cy,p.r*(0.3+0.9*flare),col, 150*flare*flare);
+    // sparks
+    for(let i=0;i<6*flare;i++){
+      const ang=(i/6)*TWO_PI + d;
+      gauss(cx+Math.cos(ang)*p.r*flare*0.8, cy+Math.sin(ang)*p.r*flare*0.8,
+            p.r*0.12, col, 80*flare);
+    }
+  }
+}
+
+// additive gaussian blob (cheap glow primitive)
+function gauss(x,y,r,c,a){
+  if(a<=0) return;
+  for(let k=4;k>=1;k--){
+    fill(c[0],c[1],c[2], a*0.30/k);
+    circle(x,y, r*k*0.55);
+  }
+}
+
+function updateHUD(d){
+  document.getElementById('day').textContent = Math.floor(d);
+  document.getElementById('year').textContent = year;
+  let name='winter';
+  for(let i=0;i<SEASONS.length-1;i++){if(d>=SEASONS[i].t && d<SEASONS[i+1].t){name=SEASONS[i].name;break;}}
+  document.getElementById('season').textContent = name;
+}
+
+// click anywhere to reseed timing slightly (a different "year")
+function mousePressed(){
+  for(const p of plants){const j=(Math.sin((p.x+p.y)*99+frameCount)*7);p.start+=j;p.peak+=j;p.end+=j;}
+}
+</script>
+</body>
+</html>

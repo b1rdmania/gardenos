@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>GardenOS — Trial 07b · Brush Strokes</title>
+<style>
+  html,body{margin:0;height:100%;background:#01030a;overflow:hidden;
+    font-family:-apple-system,Inter,system-ui,sans-serif;color:#eef0e8}
+  canvas{display:block}
+  #hud{position:fixed;left:20px;bottom:18px;z-index:10;font-size:12px;letter-spacing:.05em;
+    line-height:1.55;text-shadow:0 1px 12px #000;opacity:.85;pointer-events:none}
+  #season{font-size:11px;text-transform:uppercase;letter-spacing:.24em;opacity:.6}
+  #title{position:fixed;right:20px;top:18px;z-index:10;text-align:right;font-size:11px;
+    letter-spacing:.2em;text-transform:uppercase;opacity:.4;text-shadow:0 1px 12px #000}
+  #hint{position:fixed;left:20px;top:18px;z-index:10;font-size:11px;letter-spacing:.06em;
+    opacity:.32;text-shadow:0 1px 12px #000}
+</style>
+</head>
+<body>
+<div id="title">GardenOS · Trial 07b<br><span style="opacity:.6">brush strokes</span></div>
+<div id="hint">space · pause   ·   ↑↓ · year speed</div>
+<div id="hud"><div id="season">winter</div><div>day <b id="day">0</b> / 365 · year <b id="year">1</b></div></div>
+<script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
+<script>
+/* ───────────────────────────────────────────────────────────────
+   GardenOS — Trial 07b · Brush Strokes
+   The foliage is no longer a silhouette wall. Each plant is an
+   INDIVIDUAL instanced stroke — a tapered, camera-facing brush mark
+   rising from the ground, ~16k of them. Flowering plants ignite a
+   bright colour at the tip during their species' season. The garden
+   is a field of marks, not painted blocks. (Nocturne palette.)
+   ─────────────────────────────────────────────────────────────── */
+
+const YEAR=365;
+let day=0, year=1, speed=10, paused=false;
+
+const renderer=new THREE.WebGLRenderer({antialias:true});
+renderer.setPixelRatio(Math.min(devicePixelRatio,1.75));
+renderer.setSize(innerWidth,innerHeight);
+document.body.appendChild(renderer.domElement);
+
+const FOG=new THREE.Color(0.02,0.05,0.06);
+const scene=new THREE.Scene();
+const cam=new THREE.PerspectiveCamera(52, innerWidth/innerHeight, 0.1, 200);
+cam.position.set(0,1.35,7.0); cam.lookAt(0,1.15,-14);
+
+const post=new THREE.Scene(), postCam=new THREE.Camera();
+const postQuad=new THREE.Mesh(new THREE.PlaneGeometry(2,2),null); post.add(postQuad);
+let sceneRT=new THREE.WebGLRenderTarget(innerWidth*renderer.getPixelRatio(),innerHeight*renderer.getPixelRatio(),
+  {type:THREE.HalfFloatType,minFilter:THREE.LinearFilter,magFilter:THREE.LinearFilter});
+
+const NOISE=`
+  float h21(vec2 p){p=fract(p*vec2(123.34,456.21));p+=dot(p,p+45.32);return fract(p.x*p.y);}
+  float vnoise(vec2 p){vec2 i=floor(p),f=fract(p);f=f*f*(3.-2.*f);
+    float a=h21(i),b=h21(i+vec2(1,0)),c=h21(i+vec2(0,1)),d=h21(i+vec2(1,1));
+    return mix(mix(a,b,f.x),mix(c,d,f.x),f.y);}
+  float fbm(vec2 p){float s=0.,a=.5;for(int i=0;i<4;i++){s+=a*vnoise(p);p*=2.0;a*=.5;}return s;}
+`;
+
+// ── SKY ─────────────────────────────────────────────────────────────
+const sky=new THREE.Mesh(new THREE.PlaneGeometry(400,160),
+  new THREE.ShaderMaterial({depthWrite:false,
+    uniforms:{top:{value:new THREE.Color(0.01,0.02,0.05)},mid:{value:new THREE.Color(0.03,0.06,0.09)},
+              hor:{value:FOG.clone()},warm:{value:new THREE.Color(0.10,0.10,0.20)}},
+    vertexShader:`varying vec2 vUv; void main(){vUv=uv; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.);}`,
+    fragmentShader:`precision highp float; varying vec2 vUv; uniform vec3 top,mid,hor,warm;
+      void main(){float y=vUv.y; vec3 c=mix(hor,mid,smoothstep(0.0,0.35,y));
+        c=mix(c,top,smoothstep(0.3,1.0,y)); c+=warm*exp(-pow((y-0.04)/0.10,2.0))*0.5;
+        gl_FragColor=vec4(c,1.0);}`}));
+sky.position.set(0,60,-70); scene.add(sky);
+
+// ── GROUND (manual fog) ─────────────────────────────────────────────
+const ground=new THREE.Mesh(new THREE.PlaneGeometry(400,400),
+  new THREE.ShaderMaterial({
+    uniforms:{cNear:{value:new THREE.Color(0.012,0.04,0.022)},cFar:{value:FOG.clone()},
+              fogColor:{value:FOG.clone()},fogNear:{value:6.0},fogFar:{value:40.0}},
+    vertexShader:`varying vec3 vW; varying float vFog;
+      void main(){vW=position; vec4 mv=modelViewMatrix*vec4(position,1.0); vFog=-mv.z;
+        gl_Position=projectionMatrix*mv;}`,
+    fragmentShader:`precision highp float; varying vec3 vW; varying float vFog;
+      uniform vec3 cNear,cFar,fogColor; uniform float fogNear,fogFar;
+${NOISE}
+      void main(){float pch=fbm(vW.xz*0.25);
+        vec3 c=mix(cNear,cFar,smoothstep(0.0,40.0,length(vW.xz)*0.5)); c*=0.7+0.5*pch;
+        c=mix(c,fogColor,smoothstep(fogNear,fogFar,vFog));
+        gl_FragColor=vec4(c,1.0);}`}));
+ground.rotation.x=-Math.PI/2; scene.add(ground);
+
+// ── STROKE FIELD — one instanced brush mark per plant ───────────────
+const NP=16000;
+const base=new THREE.PlaneGeometry(1,1); base.translate(0,0.5,0);   // y in [0,1], base at ground
+const geo=new THREE.InstancedBufferGeometry();
+geo.index=base.index; geo.attributes.position=base.attributes.position; geo.attributes.uv=base.attributes.uv;
+
+const iPos=new Float32Array(NP*3), iScale=new Float32Array(NP*2),
+      iSeed=new Float32Array(NP), iSpec=new Float32Array(NP), iFlower=new Float32Array(NP), iShade=new Float32Array(NP);
+for(let i=0;i<NP;i++){
+  const z=THREE.MathUtils.lerp(6.2,-36, Math.pow(Math.random(),0.62));   // denser near
+  const spread=THREE.MathUtils.mapLinear(z,6.2,-36, 11, 40);
+  iPos[i*3]=(Math.random()*2-1)*spread; iPos[i*3+1]=0; iPos[i*3+2]=z;
+  iScale[i*2]=THREE.MathUtils.lerp(0.05,0.16,Math.random());            // stroke width
+  iScale[i*2+1]=THREE.MathUtils.lerp(0.55,2.3,Math.random()*Math.random()); // height (skew short)
+  iSeed[i]=Math.random();
+  iSpec[i]=Math.floor(Math.random()*3);
+  iFlower[i]=Math.random()<0.30?1:0;
+  iShade[i]=THREE.MathUtils.lerp(0.55,1.25,Math.random());
+}
+geo.setAttribute('iPos',new THREE.InstancedBufferAttribute(iPos,3));
+geo.setAttribute('iScale',new THREE.InstancedBufferAttribute(iScale,2));
+geo.setAttribute('iSeed',new THREE.InstancedBufferAttribute(iSeed,1));
+geo.setAttribute('iSpec',new THREE.InstancedBufferAttribute(iSpec,1));
+geo.setAttribute('iFlower',new THREE.InstancedBufferAttribute(iFlower,1));
+geo.setAttribute('iShade',new THREE.InstancedBufferAttribute(iShade,1));
+
+const SPCOL=[ new THREE.Color(1.0,0.26,0.42), new THREE.Color(0.66,0.52,1.0), new THREE.Color(1.0,0.46,0.13) ];
+const SPWIN=[ new THREE.Vector3(55,110,170), new THREE.Vector3(140,185,245), new THREE.Vector3(235,275,325) ];
+
+const strokeMat=new THREE.ShaderMaterial({
+  transparent:true, depthTest:true, depthWrite:false, side:THREE.DoubleSide,
+  uniforms:{ day:{value:0}, growth:{value:0}, time:{value:0},
+    camRight:{value:new THREE.Vector3(1,0,0)},
+    deep:{value:new THREE.Color(0.015,0.06,0.025)}, lit:{value:new THREE.Color(0.07,0.22,0.10)},
+    col0:{value:SPCOL[0]},col1:{value:SPCOL[1]},col2:{value:SPCOL[2]},
+    win0:{value:SPWIN[0]},win1:{value:SPWIN[1]},win2:{value:SPWIN[2]},
+    fogColor:{value:FOG.clone()}, fogNear:{value:6.0}, fogFar:{value:40.0} },
+  vertexShader:`
+    attribute vec3 iPos; attribute vec2 iScale; attribute float iSeed,iSpec,iFlower,iShade;
+    uniform float day,growth,time; uniform vec3 camRight;
+    varying vec2 vUv; varying float vFog,vSpec,vFlower,vShade,vSeed;
+    void main(){
+      vUv=uv; vSpec=iSpec; vFlower=iFlower; vShade=iShade; vSeed=iSeed;
+      float w=iScale.x;
+      float hgt=iScale.y*(0.18+0.82*growth);                  // grows up over the season
+      float sway=sin(time*0.6 + iSeed*30.0)*0.03*uv.y;        // gentle life
+      vec3 up=vec3(0.0,1.0,0.0);
+      vec3 world = iPos + camRight*((uv.x-0.5)*w + sway) + up*(uv.y*hgt);
+      vec4 mv=viewMatrix*vec4(world,1.0); vFog=-mv.z;
+      gl_Position=projectionMatrix*mv;
+    }`,
+  fragmentShader:`precision highp float;
+    varying vec2 vUv; varying float vFog,vSpec,vFlower,vShade,vSeed;
+    uniform float day; uniform vec3 deep,lit,col0,col1,col2,fogColor; uniform float fogNear,fogFar;
+    uniform vec3 win0,win1,win2;
+    float wstate(float d,vec3 w){ if(d<w.x||d>w.z) return 0.0;
+      return smoothstep(w.x,w.y,d)*(1.0-smoothstep(w.y,w.z,d)); }
+    void main(){
+      // brush-mark alpha: taper to a point at the tip, soft sides
+      float taper=1.0-smoothstep(0.25,1.0,vUv.y)*0.85;
+      float ax=abs(vUv.x-0.5)*2.0/max(taper,0.05);
+      float soft=smoothstep(1.0,0.15,ax);
+      float topfade=smoothstep(1.0,0.86,vUv.y);               // soft tip
+      float a=soft*topfade;
+      if(a<0.01) discard;
+
+      vec3 green=mix(deep,lit,smoothstep(0.0,1.0,vUv.y))*vShade;
+
+      // flower: bright colour at the tip during this plant's season
+      vec3 w = vSpec<0.5?win0:(vSpec<1.5?win1:win2);
+      vec3 fc= vSpec<0.5?col0:(vSpec<1.5?col1:col2);
+      float e=wstate(day,w)*(0.5+0.5*vSeed);
+      float tip=smoothstep(0.55,1.0,vUv.y);
+      vec3 col = green + fc*tip*e*4.0*float(vFlower>0.5);      // HDR tip → post bloom makes it glow
+      float fog=smoothstep(fogNear,fogFar,vFog);
+      col=mix(col,fogColor,fog);
+      gl_FragColor=vec4(col, a*(1.0-fog*0.7));
+    }`
+});
+const strokes=new THREE.Mesh(geo,strokeMat); strokes.frustumCulled=false; scene.add(strokes);
+
+// ── POST (Nocturne threshold bloom) ─────────────────────────────────
+const postU={src:{value:null},res:{value:new THREE.Vector2(innerWidth,innerHeight)},bloom:{value:1.05}};
+const presentMat=new THREE.ShaderMaterial({uniforms:postU,
+  vertexShader:`varying vec2 vUv; void main(){vUv=uv; gl_Position=vec4(position,1.);}`,
+  fragmentShader:`precision highp float; varying vec2 vUv;
+    uniform sampler2D src; uniform vec2 res; uniform float bloom;
+    vec3 aces(vec3 x){return clamp((x*(2.51*x+0.03))/(x*(2.43*x+0.59)+0.14),0.,1.);}
+    void main(){
+      vec3 base=texture2D(src,vUv).rgb; vec3 b=vec3(0.); float tot=0.;
+      for(int i=1;i<=10;i++){float fr=float(i); float rad=fr*1.1/res.y; float w=1.0/(fr*fr);
+        for(int k=0;k<8;k++){float a=float(k)/8.*6.2831; b+=texture2D(src,vUv+vec2(cos(a),sin(a))*rad).rgb*w; tot+=w;}}
+      b/=tot; b=max(b-0.09,0.0)*1.3;
+      vec3 col=base + b*bloom;
+      col=aces(col*1.02); col=pow(col,vec3(0.92));
+      float v=1.0-0.5*smoothstep(0.2,1.3,length(vUv-0.5))*2.0; v=clamp(v,0.0,1.0);
+      gl_FragColor=vec4(col*v,1.0);
+    }`});
+
+// ── season ──────────────────────────────────────────────────────────
+const SEASONS=[{n:'winter',t:0},{n:'spring',t:80},{n:'summer',t:172},{n:'autumn',t:264},{n:'winter',t:340}];
+function seasonName(d){for(let i=0;i<4;i++)if(d>=SEASONS[i].t&&d<SEASONS[i+1].t)return SEASONS[i].n;return'winter';}
+function smooth(a,b,x){x=Math.min(1,Math.max(0,(x-a)/(b-a)));return x*x*(3-2*x);}
+function growthOf(d){return smooth(35,150,d)*(1-smooth(250,345,d));}
+
+const _r=new THREE.Vector3();
+let last=null;
+function frame(t){
+  requestAnimationFrame(frame);
+  if(last===null)last=t; const dtr=Math.min((t-last)/1000,0.05); last=t;
+  if(!paused){ day+=speed*dtr; if(day>=YEAR){day-=YEAR; year++;} }
+  const g=growthOf(day);
+  _r.setFromMatrixColumn(cam.matrixWorld,0); _r.y=0; _r.normalize();   // horizontal camera-right for billboarding
+  strokeMat.uniforms.camRight.value.copy(_r);
+  strokeMat.uniforms.day.value=day; strokeMat.uniforms.growth.value=Math.max(0.15,g);
+  strokeMat.uniforms.time.value=t*0.001;
+
+  renderer.setRenderTarget(sceneRT); renderer.render(scene,cam);
+  postU.src.value=sceneRT.texture; postQuad.material=presentMat;
+  renderer.setRenderTarget(null); renderer.render(post,postCam);
+  document.getElementById('day').textContent=Math.floor(day);
+  document.getElementById('year').textContent=year;
+  document.getElementById('season').textContent=seasonName(day);
+}
+requestAnimationFrame(frame);
+window.__setDay=v=>{day=v;}; window.__pause=v=>{paused=v;};
+
+addEventListener('resize',()=>{
+  renderer.setSize(innerWidth,innerHeight);
+  cam.aspect=innerWidth/innerHeight; cam.updateProjectionMatrix();
+  postU.res.value.set(innerWidth,innerHeight);
+  sceneRT.setSize(innerWidth*renderer.getPixelRatio(),innerHeight*renderer.getPixelRatio());
+});
+addEventListener('keydown',e=>{
+  if(e.code==='Space'){paused=!paused;e.preventDefault();}
+  if(e.code==='ArrowUp')speed=Math.min(speed*1.3,90);
+  if(e.code==='ArrowDown')speed=Math.max(speed/1.3,1);
+});
+</script>
+</body>
+</html>

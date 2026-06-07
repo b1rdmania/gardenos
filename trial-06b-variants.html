@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>GardenOS — Trial 06b · Garden Variants</title>
+<style>
+  html,body{margin:0;height:100%;background:#0a1410;overflow:hidden;
+    font-family:-apple-system,Inter,system-ui,sans-serif;color:#eef0e8}
+  canvas{display:block}
+  #hud{position:fixed;left:20px;bottom:18px;z-index:10;font-size:12px;letter-spacing:.05em;
+    line-height:1.55;text-shadow:0 1px 12px #000;opacity:.85;pointer-events:none}
+  #variant{font-size:13px;font-weight:600;letter-spacing:.12em;text-transform:uppercase}
+  #season{font-size:11px;text-transform:uppercase;letter-spacing:.24em;opacity:.6;margin-top:3px}
+  #title{position:fixed;right:20px;top:18px;z-index:10;text-align:right;font-size:11px;
+    letter-spacing:.2em;text-transform:uppercase;opacity:.4;text-shadow:0 1px 12px #000}
+  #hint{position:fixed;left:20px;top:18px;z-index:10;font-size:11px;letter-spacing:.06em;
+    opacity:.34;text-shadow:0 1px 12px #000}
+</style>
+</head>
+<body>
+<div id="title">GardenOS · Trial 06b<br><span style="opacity:.6">garden variants</span></div>
+<div id="hint">1–4 · variant   ·   space · pause   ·   ↑↓ · year speed</div>
+<div id="hud"><div id="variant">—</div><div id="season">winter</div><div>day <b id="day">0</b> / 365 · year <b id="year">1</b></div></div>
+<script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
+<script>
+/* ───────────────────────────────────────────────────────────────
+   GardenOS — Trial 06b · Variants
+   The Trial 06 first-person garden, made preset-driven. Four distinct
+   aesthetic stances on the same scene (depth layers, growth, blooms).
+   Press 1–4 to switch live. Still season-curve driven (the substrate
+   wiring is Trial 07); this iteration is purely about the LOOK.
+   ─────────────────────────────────────────────────────────────── */
+
+const YEAR=365;
+let day=0, year=1, speed=10, paused=false;
+
+const renderer=new THREE.WebGLRenderer({antialias:true});
+renderer.setPixelRatio(Math.min(devicePixelRatio,1.75));
+renderer.setSize(innerWidth,innerHeight);
+document.body.appendChild(renderer.domElement);
+
+const scene=new THREE.Scene();
+scene.fog=new THREE.Fog(new THREE.Color(0.05,0.16,0.11), 8, 46);
+const cam=new THREE.PerspectiveCamera(56, innerWidth/innerHeight, 0.1, 200);
+
+const post=new THREE.Scene(), postCam=new THREE.Camera();
+const postQuad=new THREE.Mesh(new THREE.PlaneGeometry(2,2),null); post.add(postQuad);
+let sceneRT=new THREE.WebGLRenderTarget(innerWidth*renderer.getPixelRatio(),innerHeight*renderer.getPixelRatio(),
+  {type:THREE.HalfFloatType,minFilter:THREE.LinearFilter,magFilter:THREE.LinearFilter});
+
+const NOISE=`
+  float h21(vec2 p){p=fract(p*vec2(123.34,456.21));p+=dot(p,p+45.32);return fract(p.x*p.y);}
+  float vnoise(vec2 p){vec2 i=floor(p),f=fract(p);f=f*f*(3.-2.*f);
+    float a=h21(i),b=h21(i+vec2(1,0)),c=h21(i+vec2(0,1)),d=h21(i+vec2(1,1));
+    return mix(mix(a,b,f.x),mix(c,d,f.x),f.y);}
+  float fbm(vec2 p){float s=0.,a=.5;for(int i=0;i<5;i++){s+=a*vnoise(p);p*=2.0;a*=.5;}return s;}
+`;
+
+// ── SKY ─────────────────────────────────────────────────────────────
+const skyU={top:{value:new THREE.Color()},mid:{value:new THREE.Color()},
+  hor:{value:new THREE.Color()},warm:{value:new THREE.Color()},warmAmt:{value:0.6}};
+const sky=new THREE.Mesh(new THREE.PlaneGeometry(400,160),
+  new THREE.ShaderMaterial({fog:false,depthWrite:false,uniforms:skyU,
+    vertexShader:`varying vec2 vUv; void main(){vUv=uv; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.);}`,
+    fragmentShader:`precision highp float; varying vec2 vUv; uniform vec3 top,mid,hor,warm; uniform float warmAmt;
+      void main(){float y=vUv.y; vec3 c=mix(hor,mid,smoothstep(0.0,0.35,y));
+        c=mix(c,top,smoothstep(0.3,1.0,y)); c+=warm*exp(-pow((y-0.04)/0.10,2.0))*warmAmt;
+        gl_FragColor=vec4(c,1.0);}`}));
+sky.position.set(0,60,-70); scene.add(sky);
+
+// ── GROUND ──────────────────────────────────────────────────────────
+const groundU=Object.assign({},THREE.UniformsLib.fog,{cNear:{value:new THREE.Color()},cFar:{value:new THREE.Color()}});
+const ground=new THREE.Mesh(new THREE.PlaneGeometry(400,400),
+  new THREE.ShaderMaterial({fog:true,uniforms:groundU,
+    vertexShader:`varying vec3 vW;
+#include <fog_pars_vertex>
+      void main(){vec4 mvPosition=modelViewMatrix*vec4(position,1.0); vW=position;
+        gl_Position=projectionMatrix*mvPosition;
+        #include <fog_vertex>
+      }`,
+    fragmentShader:`precision highp float; varying vec3 vW; uniform vec3 cNear,cFar;
+${NOISE}
+#include <fog_pars_fragment>
+      void main(){float pch=fbm(vW.xz*0.25);
+        vec3 c=mix(cNear,cFar,smoothstep(0.0,40.0,length(vW.xz)*0.5)); c*=0.7+0.5*pch;
+        gl_FragColor=vec4(c,1.0);
+        #include <fog_fragment>
+      }`}));
+ground.rotation.x=-Math.PI/2; scene.add(ground);
+
+// ── VEGETATION LAYERS ───────────────────────────────────────────────
+const LAYERS=12;
+const vegU=[];
+function vegMat(i){
+  const t=i/(LAYERS-1);
+  const u=Object.assign({},THREE.UniformsLib.fog,{
+    growth:{value:0}, bloomAmt:{value:0}, density:{value:0}, depthT:{value:t}, seed:{value:i*1.37+0.5},
+    bloomCol:{value:new THREE.Color(0.9,0.3,0.4)}, accent:{value:new THREE.Color(1,1,1)},
+    deep:{value:new THREE.Color()}, lit:{value:new THREE.Color()},
+    bladeAmt:{value:0.5}, clumpFreq:{value:9.0}, heightScale:{value:1.0},
+    coreSize:{value:0.022}, haloSize:{value:0.06}, bloomMul:{value:2.3}, satMix:{value:0.3}
+  });
+  vegU.push(u);
+  return new THREE.ShaderMaterial({transparent:true,depthWrite:false,fog:true,side:THREE.DoubleSide,uniforms:u,
+    vertexShader:`varying vec2 vUv;
+#include <fog_pars_vertex>
+      void main(){vUv=uv; vec4 mvPosition=modelViewMatrix*vec4(position,1.0);
+        gl_Position=projectionMatrix*mvPosition;
+        #include <fog_vertex>
+      }`,
+    fragmentShader:`precision highp float; varying vec2 vUv;
+      uniform float growth,bloomAmt,density,depthT,seed,bladeAmt,clumpFreq,heightScale,coreSize,haloSize,bloomMul,satMix;
+      uniform vec3 bloomCol,accent,deep,lit;
+${NOISE}
+#include <fog_pars_fragment>
+      void main(){
+        float x=vUv.x, y=vUv.y;
+        float clump=fbm(vec2(x*clumpFreq+seed*3.1, seed));
+        float blade=fbm(vec2(x*60.0+seed, 11.0));
+        float h=(0.18+0.72*clump)*(0.22+0.78*growth)*heightScale;
+        h*=mix(1.05,0.7,depthT);
+        float edge=0.012+0.03*depthT;
+        float inside=smoothstep(h+edge,h-edge,y);
+        if(inside<0.003 && bloomAmt<0.001) discard;
+        vec3 green=mix(deep,lit,smoothstep(0.0,h,y));
+        green*=(1.0-bladeAmt)+bladeAmt*2.0*blade;
+        green*=0.75+0.35*clump;
+        float bseed=fbm(vec2(x*5.0+seed*7.0+19.0, 3.0));
+        float flowers=smoothstep(0.50,0.63,bseed)*density;
+        float bloomY=h*mix(0.80,1.18, fract(bseed*13.0));
+        float col=fract(x*5.0);
+        float glow=exp(-pow((y-bloomY)/haloSize,2.0))*exp(-pow((col-0.5)/0.30,2.0));
+        float core=exp(-pow((y-bloomY)/coreSize,2.0))*exp(-pow((col-0.5)/0.16,2.0));
+        float bloom=flowers*glow*bloomAmt, bcoreI=flowers*core*bloomAmt;
+        vec3 bcol=mix(bloomCol, accent, satMix*smoothstep(0.5,1.0,fract(bseed*7.3)));
+        vec3 c=green*inside + bcol*bloom*bloomMul + bcol*bcoreI*(bloomMul*1.05);
+        float a=max(inside, max(bloom,bcoreI)*1.1);
+        gl_FragColor=vec4(c,a);
+#include <fog_fragment>
+      }`});
+}
+const vegLayers=[];
+for(let i=0;i<LAYERS;i++){
+  const t=i/(LAYERS-1);
+  const w=THREE.MathUtils.lerp(16,70,t), hgt=THREE.MathUtils.lerp(5.5,8.5,t);
+  const m=new THREE.Mesh(new THREE.PlaneGeometry(w,hgt), vegMat(i));
+  m.position.set(0,hgt/2, THREE.MathUtils.lerp(5.5,-38.0,t)); m.renderOrder=i;
+  scene.add(m); vegLayers.push(m);
+}
+
+// ── POST ────────────────────────────────────────────────────────────
+const postU={src:{value:null},res:{value:new THREE.Vector2(innerWidth,innerHeight)},
+  bloom:{value:0.7},threshold:{value:0.18},exposure:{value:1.04},gamma:{value:0.94},vign:{value:0.3}};
+const presentMat=new THREE.ShaderMaterial({uniforms:postU,
+  vertexShader:`varying vec2 vUv; void main(){vUv=uv; gl_Position=vec4(position,1.);}`,
+  fragmentShader:`precision highp float; varying vec2 vUv;
+    uniform sampler2D src; uniform vec2 res; uniform float bloom,threshold,exposure,gamma,vign;
+    vec3 aces(vec3 x){return clamp((x*(2.51*x+0.03))/(x*(2.43*x+0.59)+0.14),0.,1.);}
+    void main(){
+      vec3 base=texture2D(src,vUv).rgb; vec3 b=vec3(0.); float tot=0.;
+      for(int i=1;i<=10;i++){float fr=float(i); float rad=fr*1.0/res.y; float w=1.0/(fr*fr);
+        for(int k=0;k<8;k++){float a=float(k)/8.*6.2831; b+=texture2D(src,vUv+vec2(cos(a),sin(a))*rad).rgb*w; tot+=w;}}
+      b/=tot; b=max(b-threshold,0.0)*1.25;
+      vec3 col=base + b*bloom;
+      col=aces(col*exposure); col=pow(col,vec3(gamma));
+      float v=1.0-vign*smoothstep(0.2,1.3,length(vUv-0.5))*2.0; v=clamp(v,0.0,1.0);
+      gl_FragColor=vec4(col*v,1.0);
+    }`});
+
+// ── season → growth + flowering ─────────────────────────────────────
+const SEASONS=[{n:'winter',t:0},{n:'spring',t:80},{n:'summer',t:172},{n:'autumn',t:264},{n:'winter',t:340}];
+function seasonName(d){for(let i=0;i<4;i++)if(d>=SEASONS[i].t&&d<SEASONS[i+1].t)return SEASONS[i].n;return'winter';}
+function smooth(a,b,x){x=Math.min(1,Math.max(0,(x-a)/(b-a)));return x*x*(3-2*x);}
+function growthOf(d){return smooth(35,150,d)*(1-smooth(250,345,d));}
+const FWIN=[[55,110,165],[140,185,240],[235,275,320]];   // season flower windows
+function flowerState(d,palettes){
+  let amt=0,col=[.6,.4,.5],acc=[1,1,1],dens=0;
+  for(let i=0;i<3;i++){const f=FWIN[i]; let e=0;
+    if(d>=f[0]&&d<=f[2]){ e=d<f[1]?smooth(f[0],f[1],d):1-smooth(f[1],f[2],d); }
+    if(e>amt){amt=e; col=palettes[i][0]; acc=palettes[i][1]; dens=Math.min(1,e*1.3);}}
+  return {amt,col,acc,dens};
+}
+
+// ── PRESETS ─────────────────────────────────────────────────────────
+const PRESETS=[
+ { name:'Giverny',
+   fog:[0.10,0.17,0.12, 9,44], cam:[0,1.45,7.5,1.25,56],
+   sky:{top:[.18,.20,.24],mid:[.26,.28,.24],warm:[.55,.45,.32],warmAmt:0.8},
+   ground:[[.06,.16,.07],[.12,.22,.14]],
+   veg:{deep:[.06,.18,.07],lit:[.22,.52,.20],bladeAmt:0.35,clumpFreq:8.0,heightScale:1.0,
+        coreSize:0.04,haloSize:0.10,bloomMul:2.0,satMix:0.45,densityBoost:1.25},
+   post:{bloom:0.75,threshold:0.16,exposure:1.08,gamma:0.95,vign:0.35},
+   palettes:[[[.96,.40,.52],[1.0,.80,.40]],[[.75,.45,.95],[.95,.70,.95]],[[.98,.55,.25],[.92,.35,.30]]] },
+
+ { name:'Nocturne',
+   fog:[0.02,0.05,0.06, 6,40], cam:[0,1.35,7.0,1.2,52],
+   sky:{top:[.01,.02,.05],mid:[.03,.06,.09],warm:[.10,.10,.20],warmAmt:0.5},
+   ground:[[.01,.04,.02],[.02,.06,.05]],
+   veg:{deep:[.01,.05,.02],lit:[.04,.16,.07],bladeAmt:0.25,clumpFreq:9.0,heightScale:1.0,
+        coreSize:0.016,haloSize:0.05,bloomMul:4.2,satMix:0.2,densityBoost:0.7},
+   post:{bloom:1.1,threshold:0.10,exposure:1.0,gamma:0.92,vign:0.5},
+   palettes:[[[1.0,.30,.45],[1.0,.85,.45]],[[.55,.55,1.0],[.40,.95,1.0]],[[1.0,.45,.15],[1.0,.20,.35]]] },
+
+ { name:'Meadow',
+   fog:[0.14,0.18,0.10, 10,50], cam:[0,1.25,7.0,1.05,60],
+   sky:{top:[.30,.36,.42],mid:[.46,.46,.40],warm:[.70,.58,.36],warmAmt:1.0},
+   ground:[[.10,.20,.06],[.18,.28,.12]],
+   veg:{deep:[.10,.22,.06],lit:[.34,.58,.20],bladeAmt:0.55,clumpFreq:14.0,heightScale:1.15,
+        coreSize:0.018,haloSize:0.05,bloomMul:2.6,satMix:0.3,densityBoost:1.6},
+   post:{bloom:0.6,threshold:0.2,exposure:1.06,gamma:0.96,vign:0.25},
+   palettes:[[[1.0,.78,.22],[1.0,.45,.30]],[[.95,.50,.70],[1.0,.85,.40]],[[1.0,.60,.18],[.90,.30,.20]]] },
+
+ { name:'Sumi',
+   fog:[0.10,0.13,0.13, 7,34], cam:[0,1.5,8.0,1.3,50],
+   sky:{top:[.10,.12,.13],mid:[.16,.18,.18],warm:[.22,.22,.20],warmAmt:0.4},
+   ground:[[.07,.10,.08],[.11,.14,.13]],
+   veg:{deep:[.05,.09,.06],lit:[.16,.26,.17],bladeAmt:0.3,clumpFreq:6.0,heightScale:1.25,
+        coreSize:0.02,haloSize:0.07,bloomMul:2.4,satMix:0.15,densityBoost:0.45},
+   post:{bloom:0.7,threshold:0.2,exposure:1.0,gamma:0.98,vign:0.4},
+   palettes:[[[.95,.95,.95],[.85,.55,.60]],[[.80,.80,.95],[.95,.95,1.0]],[[.95,.70,.55],[.80,.40,.35]]] },
+];
+let cur=0, palettes=PRESETS[0].palettes;
+
+function applyPreset(idx){
+  cur=idx; const p=PRESETS[idx]; palettes=p.palettes;
+  scene.fog.color.setRGB(p.fog[0],p.fog[1],p.fog[2]); scene.fog.near=p.fog[3]; scene.fog.far=p.fog[4];
+  cam.position.set(p.cam[0],p.cam[1],p.cam[2]); cam.lookAt(0,p.cam[3],-14);
+  cam.fov=p.cam[4]; cam.updateProjectionMatrix();
+  skyU.top.value.setRGB(...p.sky.top); skyU.mid.value.setRGB(...p.sky.mid);
+  skyU.hor.value.copy(scene.fog.color); skyU.warm.value.setRGB(...p.sky.warm); skyU.warmAmt.value=p.sky.warmAmt;
+  groundU.cNear.value.setRGB(...p.ground[0]); groundU.cFar.value.setRGB(...p.ground[1]);
+  for(const u of vegU){
+    u.deep.value.setRGB(...p.veg.deep); u.lit.value.setRGB(...p.veg.lit);
+    u.bladeAmt.value=p.veg.bladeAmt; u.clumpFreq.value=p.veg.clumpFreq; u.heightScale.value=p.veg.heightScale;
+    u.coreSize.value=p.veg.coreSize; u.haloSize.value=p.veg.haloSize; u.bloomMul.value=p.veg.bloomMul; u.satMix.value=p.veg.satMix;
+  }
+  postU.bloom.value=p.post.bloom; postU.threshold.value=p.post.threshold;
+  postU.exposure.value=p.post.exposure; postU.gamma.value=p.post.gamma; postU.vign.value=p.post.vign;
+  document.getElementById('variant').textContent=(idx+1)+' · '+p.name;
+}
+applyPreset(0);
+
+// ── loop ────────────────────────────────────────────────────────────
+let last=null;
+function frame(t){
+  requestAnimationFrame(frame);
+  if(last===null)last=t; const dtr=Math.min((t-last)/1000,0.05); last=t;
+  if(!paused){ day+=speed*dtr; if(day>=YEAR){day-=YEAR; year++;} }
+  const g=growthOf(day), fl=flowerState(day,palettes), db=PRESETS[cur].veg.densityBoost;
+  for(let i=0;i<LAYERS;i++){
+    const u=vegU[i], ph=0.86+0.14*Math.sin(i*1.3);
+    u.growth.value=g*ph;
+    u.bloomAmt.value=fl.amt*(0.7+0.5*Math.sin(i*2.1+1.0));
+    u.density.value=Math.min(1.4, fl.dens*db*(0.6+0.7*((i*37%11)/11)));
+    u.bloomCol.value.setRGB(fl.col[0],fl.col[1],fl.col[2]);
+    u.accent.value.setRGB(fl.acc[0],fl.acc[1],fl.acc[2]);
+  }
+  renderer.setRenderTarget(sceneRT); renderer.render(scene,cam);
+  postU.src.value=sceneRT.texture; postQuad.material=presentMat;
+  renderer.setRenderTarget(null); renderer.render(post,postCam);
+  document.getElementById('day').textContent=Math.floor(day);
+  document.getElementById('year').textContent=year;
+  document.getElementById('season').textContent=seasonName(day);
+}
+requestAnimationFrame(frame);
+window.__setDay=v=>{day=v;}; window.__pause=v=>{paused=v;}; window.__variant=applyPreset;
+
+addEventListener('resize',()=>{
+  renderer.setSize(innerWidth,innerHeight);
+  cam.aspect=innerWidth/innerHeight; cam.updateProjectionMatrix();
+  postU.res.value.set(innerWidth,innerHeight);
+  sceneRT.setSize(innerWidth*renderer.getPixelRatio(),innerHeight*renderer.getPixelRatio());
+});
+addEventListener('keydown',e=>{
+  if(e.code==='Space'){paused=!paused;e.preventDefault();}
+  if(e.code==='ArrowUp')speed=Math.min(speed*1.3,90);
+  if(e.code==='ArrowDown')speed=Math.max(speed/1.3,1);
+  if(e.key>='1'&&e.key<='4')applyPreset(+e.key-1);
+});
+</script>
+</body>
+</html>

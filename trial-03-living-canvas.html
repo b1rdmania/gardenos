@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>GardenOS — Trial 03 · Living Canvas</title>
+<style>
+  html,body{margin:0;height:100%;background:#02030a;overflow:hidden;
+    font-family:-apple-system,Inter,system-ui,sans-serif;color:#e8e4dc}
+  canvas{display:block}
+  #hud{position:fixed;left:20px;bottom:18px;z-index:10;font-size:12px;
+    letter-spacing:.05em;line-height:1.5;text-shadow:0 1px 10px #000;opacity:.8;pointer-events:none}
+  #season{font-size:11px;text-transform:uppercase;letter-spacing:.24em;opacity:.6}
+  #title{position:fixed;right:20px;top:18px;z-index:10;text-align:right;font-size:11px;
+    letter-spacing:.2em;text-transform:uppercase;opacity:.4;text-shadow:0 1px 10px #000}
+  #hint{position:fixed;left:20px;top:18px;z-index:10;font-size:11px;letter-spacing:.06em;
+    opacity:.32;text-shadow:0 1px 10px #000}
+</style>
+</head>
+<body>
+<div id="title">GardenOS · Trial 03<br><span style="opacity:.6">living canvas</span></div>
+<div id="hint">space · pause   ·   ↑↓ · year speed   ·   click · reseed</div>
+<div id="hud"><div id="season">winter</div><div>day <b id="day">0</b> / 365 · year <b id="year">1</b></div></div>
+<script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
+<script>
+/* ───────────────────────────────────────────────────────────────
+   GardenOS — Trial 03 · Living Canvas
+   Same ecological model as Trial 01, but rendered as LIGHT:
+     · a ping-pong feedback buffer (light decays + diffuses → memory)
+     · multi-tap bloom + ACES tonemap (gallery / LED quality)
+   The garden state is computed on the CPU each frame (cheap, ~12
+   plants) and fed to the shader as uniform arrays. The shader paints
+   each species as a behaviour, never a picture.
+   ─────────────────────────────────────────────────────────────── */
+
+const YEAR=365; const MAX=16;
+let day=0, year=1, speed=9, paused=false;
+
+// ── ecological model (mirrors Trial 01) ───────────────────────────
+const easeOut=t=>1-Math.pow(1-t,3), easeIn=t=>t*t*t;
+function envelope(d,s,p,e){ if(d<s||d>e)return 0; return d<p?easeOut((d-s)/(p-s)):1-easeIn((d-p)/(e-p)); }
+const SPECIES={tulip:0,allium:1,foxglove:2,hosta:3,poppy:4};
+let plants=[];
+function makeGarden(){
+  const add=(sp,o)=>plants.push(Object.assign({sp:SPECIES[sp]},o));
+  add('tulip',   {x:.20,y:.38,s:60, p:92, e:130, r:.16, ca:[.95,.25,.30], cb:[1,.78,.25]});
+  add('tulip',   {x:.30,y:.30,s:66, p:98, e:134, r:.14, ca:[.96,.40,.58], cb:[1,.70,.36]});
+  add('allium',  {x:.52,y:.60,s:120,p:150,e:190, r:.22, ca:[.60,.36,.92], cb:[.60,.36,.92]});
+  add('allium',  {x:.66,y:.45,s:128,p:158,e:196, r:.19, ca:[.48,.45,.96], cb:[.48,.45,.96]});
+  add('foxglove',{x:.80,y:.22,s:140,p:175,e:215, r:.10, ca:[.92,.48,.80], cb:[.84,.40,.84]});
+  add('foxglove',{x:.87,y:.20,s:150,p:185,e:222, r:.09, ca:[.84,.40,.84], cb:[.84,.40,.84]});
+  add('hosta',   {x:.42,y:.20,s:90, p:200,e:300, r:.26, ca:[.10,.26,.36], cb:[.10,.26,.36]});
+  add('hosta',   {x:.12,y:.16,s:96, p:205,e:305, r:.22, ca:[.14,.30,.40], cb:[.14,.30,.40]});
+  add('poppy',   {x:.60,y:.70,s:165,p:172,e:188, r:.11, ca:[1,.24,.16], cb:[1,.36,.12]});
+  add('poppy',   {x:.72,y:.76,s:170,p:177,e:194, r:.10, ca:[1,.36,.12], cb:[1,.24,.16]});
+}
+makeGarden();
+
+// ── three.js plumbing ─────────────────────────────────────────────
+const renderer=new THREE.WebGLRenderer({antialias:false,powerPreference:'high-performance'});
+renderer.setPixelRatio(Math.min(devicePixelRatio,1.5));
+renderer.setSize(innerWidth,innerHeight);
+document.body.appendChild(renderer.domElement);
+const scene=new THREE.Scene(), cam=new THREE.Camera();
+const quad=new THREE.PlaneGeometry(2,2);
+
+function makeRT(){ return new THREE.WebGLRenderTarget(innerWidth*renderer.getPixelRatio(),
+  innerHeight*renderer.getPixelRatio(),{type:THREE.HalfFloatType,minFilter:THREE.LinearFilter,magFilter:THREE.LinearFilter}); }
+let rtA=makeRT(), rtB=makeRT();
+
+const res=new THREE.Vector2(innerWidth,innerHeight);
+
+// uniform arrays
+const uPos=[],uMeta=[],uCa=[],uCb=[];
+for(let i=0;i<MAX;i++){uPos.push(new THREE.Vector2());uMeta.push(new THREE.Vector4());uCa.push(new THREE.Vector3());uCb.push(new THREE.Vector3());}
+
+// ── PASS 1: accumulate (compute field + decay/diffuse previous) ────
+const accumMat=new THREE.ShaderMaterial({
+  uniforms:{
+    prev:{value:rtA.texture}, res:{value:res}, count:{value:plants.length},
+    ground:{value:new THREE.Vector3(.04,.05,.10)},
+    pos:{value:uPos}, meta:{value:uMeta}, ca:{value:uCa}, cb:{value:uCb},
+    decay:{value:.955}, diffuse:{value:0.9}, time:{value:0}
+  },
+  vertexShader:`varying vec2 vUv; void main(){vUv=uv; gl_Position=vec4(position,1.);}`,
+  fragmentShader:`
+    precision highp float; varying vec2 vUv;
+    uniform sampler2D prev; uniform vec2 res; uniform int count;
+    uniform vec3 ground; uniform vec2 pos[${MAX}]; uniform vec4 meta[${MAX}];
+    uniform vec3 ca[${MAX}]; uniform vec3 cb[${MAX}]; uniform float decay,diffuse,time;
+    // meta = (intensity e, species, radius, phase)
+
+    float gauss(float d,float r){ float x=d/max(r,1e-4); return exp(-x*x*2.2); }
+
+    vec3 field(vec2 uv){
+      vec3 c=vec3(0.0);
+      float aspect=res.x/res.y;
+      for(int i=0;i<${MAX};i++){
+        if(i>=count) break;
+        float e=meta[i].x; if(e<=0.001) continue;
+        float sp=meta[i].y; float r=meta[i].z; float ph=meta[i].w;
+        vec2 p=pos[i];
+        vec2 dv=(uv-p); dv.x*=aspect;
+        float d=length(dv);
+
+        if(sp<0.5){                                   // TULIP — warming colour field
+          vec3 col = ph<0.5 ? mix(vec3(.16,.5,.24),ca[i],ph*2.) : mix(ca[i],cb[i],(ph-.5)*2.);
+          c += col * gauss(d, r*(0.6+0.4*e)) * e*1.4;
+        } else if(sp<1.5){                            // ALLIUM — expanding ring
+          float rr=r*(0.25+0.95*e);
+          float band=(d-rr);
+          float soft=exp(-pow(band/(0.014+0.03*e),2.));      // outer halo
+          float core=exp(-pow(band/0.0045,2.));              // HARD ring core — survives bloom
+          c += ca[i]*(soft*e*1.1 + core*e*2.6) + ca[i]*gauss(d,r*0.20)*e*0.35;
+        } else if(sp<2.5){                            // FOXGLOVE — vertical spire
+          float h=r*2.6*e;
+          float col = abs(dv.x);
+          float along = clamp((p.y-uv.y)/max(h,1e-4),0.,1.);   // 0 base →1 tip
+          float stalk = step(0.,p.y-uv.y)*step(p.y-uv.y,h);
+          float wob = sin(along*5.+time*0.4)*0.01;
+          float w = gauss(col-wob, r*0.16*(1.-along*0.4));
+          float travel = 0.5+0.5*sin(along*9.-time*0.5);
+          c += ca[i]*stalk*w*(1.-along)*travel*e*2.0;
+        } else if(sp<3.5){                            // HOSTA — cool shadow mass
+          c += ca[i]*gauss(d, r*(0.7+0.5*e))*e*1.1;  // cool palette → reads as cool swell
+        } else {                                      // POPPY — brief ignition + sparks
+          float fl=sqrt(e);
+          c += mix(ca[i],cb[i],fl)*gauss(d, r*(0.3+0.9*fl))*fl*fl*3.0;
+          for(int k=0;k<6;k++){
+            float a=float(k)/6.*6.2831+time;
+            vec2 sp2=p+vec2(cos(a),sin(a))*r*fl*0.8;
+            vec2 sd=(uv-sp2); sd.x*=aspect;
+            c+=ca[i]*gauss(length(sd),r*0.10)*fl*1.2;
+          }
+        }
+      }
+      return c;
+    }
+
+    void main(){
+      vec2 texel=1.0/res;
+      // diffuse the previous frame: centre + 4 neighbours → light bleeds outward
+      vec3 prevC = texture2D(prev,vUv).rgb*0.4
+        + texture2D(prev,vUv+vec2(texel.x,0)*diffuse).rgb*0.15
+        + texture2D(prev,vUv-vec2(texel.x,0)*diffuse).rgb*0.15
+        + texture2D(prev,vUv+vec2(0,texel.y)*diffuse).rgb*0.15
+        + texture2D(prev,vUv-vec2(0,texel.y)*diffuse).rgb*0.15;
+      vec3 emit = field(vUv) + ground*0.02;
+      gl_FragColor=vec4(prevC*decay + emit, 1.0);
+    }`
+});
+
+// ── PASS 2: present (bloom + ACES tonemap + vignette) ──────────────
+const presentMat=new THREE.ShaderMaterial({
+  uniforms:{ src:{value:null}, res:{value:res}, bloom:{value:0.62} },
+  vertexShader:`varying vec2 vUv; void main(){vUv=uv; gl_Position=vec4(position,1.);}`,
+  fragmentShader:`
+    precision highp float; varying vec2 vUv;
+    uniform sampler2D src; uniform vec2 res; uniform float bloom;
+    vec3 aces(vec3 x){ return clamp((x*(2.51*x+0.03))/(x*(2.43*x+0.59)+0.14),0.,1.); }
+    void main(){
+      vec3 base=texture2D(src,vUv).rgb;
+      // cheap radial bloom: a few rings of taps
+      vec3 b=vec3(0.); float tot=0.;
+      for(int i=1;i<=10;i++){
+        float fr=float(i); float rad=fr*1.0/res.y; float w=1.0/(fr*fr); // tighter, faster-falloff glow
+        for(int k=0;k<8;k++){
+          float a=float(k)/8.*6.2831;
+          b+=texture2D(src,vUv+vec2(cos(a),sin(a))*rad).rgb*w; tot+=w;
+        }
+      }
+      b/=tot;
+      // only the bright tail of the field blooms → cores stay crisp
+      b=max(b-0.12,0.0)*1.25;
+      vec3 col=base + b*bloom;
+      col=aces(col*1.05);
+      col=pow(col,vec3(0.92));                 // gentle filmic lift
+      float v=smoothstep(1.25,0.25,length(vUv-0.5)); // vignette
+      gl_FragColor=vec4(col*v,1.0);
+    }`
+});
+
+const mesh=new THREE.Mesh(quad,accumMat); scene.add(mesh);
+
+// ── season ground tint ────────────────────────────────────────────
+const SEASONS=[{n:'winter',t:0,c:[.04,.05,.10]},{n:'spring',t:80,c:[.05,.10,.08]},
+  {n:'summer',t:172,c:[.09,.09,.05]},{n:'autumn',t:264,c:[.11,.06,.04]},{n:'winter',t:340,c:[.04,.05,.10]}];
+function ground(d){for(let i=0;i<SEASONS.length-1;i++){const s=SEASONS[i],e=SEASONS[i+1];
+  if(d>=s.t&&d<e.t){const t=(d-s.t)/(e.t-s.t);return [s.c[0]+(e.c[0]-s.c[0])*t,s.c[1]+(e.c[1]-s.c[1])*t,s.c[2]+(e.c[2]-s.c[2])*t];}}return SEASONS[4].c;}
+function seasonName(d){for(let i=0;i<SEASONS.length-1;i++){if(d>=SEASONS[i].t&&d<SEASONS[i+1].t)return SEASONS[i].n;}return'winter';}
+
+// ── loop ──────────────────────────────────────────────────────────
+let last=null;
+function frame(t){
+  requestAnimationFrame(frame);
+  if(last===null)last=t; const dt=Math.min((t-last)/1000,0.05); last=t;
+  if(!paused){ day+=speed*dt; if(day>=YEAR){day-=YEAR; year++;} }
+  const d=day;
+
+  // CPU: fill uniform arrays for this day
+  for(let i=0;i<plants.length;i++){
+    const pl=plants[i], e=envelope(d,pl.s,pl.p,pl.e);
+    const ph=Math.max(0,Math.min(1,(d-pl.s)/(pl.e-pl.s)));
+    uPos[i].set(pl.x,pl.y); uMeta[i].set(e,pl.sp,pl.r,ph);
+    uCa[i].set(pl.ca[0],pl.ca[1],pl.ca[2]); uCb[i].set(pl.cb[0],pl.cb[1],pl.cb[2]);
+  }
+  const g=ground(d); accumMat.uniforms.ground.value.set(g[0],g[1],g[2]);
+  accumMat.uniforms.count.value=plants.length;
+  accumMat.uniforms.time.value=t*0.001;
+
+  // PASS 1 → write to rtB, reading rtA
+  accumMat.uniforms.prev.value=rtA.texture;
+  mesh.material=accumMat;
+  renderer.setRenderTarget(rtB); renderer.render(scene,cam);
+
+  // PASS 2 → present rtB to screen
+  presentMat.uniforms.src.value=rtB.texture;
+  mesh.material=presentMat;
+  renderer.setRenderTarget(null); renderer.render(scene,cam);
+
+  // swap
+  const tmp=rtA; rtA=rtB; rtB=tmp;
+
+  document.getElementById('day').textContent=Math.floor(d);
+  document.getElementById('year').textContent=year;
+  document.getElementById('season').textContent=seasonName(d);
+}
+requestAnimationFrame(frame);
+
+// ── controls ──────────────────────────────────────────────────────
+addEventListener('resize',()=>{
+  renderer.setSize(innerWidth,innerHeight); res.set(innerWidth,innerHeight);
+  rtA.dispose(); rtB.dispose(); rtA=makeRT(); rtB=makeRT();
+});
+addEventListener('keydown',e=>{
+  if(e.code==='Space'){paused=!paused; e.preventDefault();}
+  if(e.code==='ArrowUp')speed=Math.min(speed*1.3,80);
+  if(e.code==='ArrowDown')speed=Math.max(speed/1.3,1);
+});
+addEventListener('click',()=>{ for(const p of plants){const j=(Math.sin((p.x+p.y)*97+day)*8);p.s+=j;p.p+=j;p.e+=j;} });
+</script>
+</body>
+</html>

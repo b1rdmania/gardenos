@@ -1,0 +1,297 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>GardenOS — Trial 07d · Roundness</title>
+<style>
+  html,body{margin:0;height:100%;background:#01030a;overflow:hidden;
+    font-family:-apple-system,Inter,system-ui,sans-serif;color:#eef0e8}
+  canvas{display:block}
+  #hud{position:fixed;left:20px;bottom:18px;z-index:10;font-size:12px;letter-spacing:.05em;
+    line-height:1.55;text-shadow:0 1px 12px #000;opacity:.85;pointer-events:none}
+  #season{font-size:11px;text-transform:uppercase;letter-spacing:.24em;opacity:.6}
+  #title{position:fixed;right:20px;top:18px;z-index:10;text-align:right;font-size:11px;
+    letter-spacing:.2em;text-transform:uppercase;opacity:.4;text-shadow:0 1px 12px #000}
+  #hint{position:fixed;left:20px;top:18px;z-index:10;font-size:11px;letter-spacing:.06em;
+    opacity:.32;text-shadow:0 1px 12px #000}
+</style>
+</head>
+<body>
+<div id="title">GardenOS · Trial 07d<br><span style="opacity:.6">roundness</span></div>
+<div id="hint">space · pause   ·   ↑↓ · year speed</div>
+<div id="hud"><div id="season">winter</div><div>day <b id="day">0</b> / 365 · year <b id="year">1</b></div></div>
+<script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
+<script>
+/* ───────────────────────────────────────────────────────────────
+   GardenOS — Trial 07d · Roundness
+   07c read as all-agave because every stroke tapered to a point.
+   Now each plant carries a SILHOUETTE SHAPE, including round ones:
+     0 blade   (pointed)        — grass
+     1 leaf    (ovate, rounded) — mound / basal foliage
+     2 stem    (slim, soft tip) — spire
+     3 ball     (stem + round bloom head) — umbel / allium
+     4 bush    (soft rounded)   — daisy
+     5 dome     (low cushion)   — mound / hummock
+   Rebalanced toward rounded forms; tall plants varied (no light-sticks);
+   tighter drifts; more saturated violet. Nocturne.
+   ─────────────────────────────────────────────────────────────── */
+
+const YEAR=365;
+let day=0, year=1, speed=10, paused=false;
+
+const renderer=new THREE.WebGLRenderer({antialias:true});
+renderer.setPixelRatio(Math.min(devicePixelRatio,1.75));
+renderer.setSize(innerWidth,innerHeight);
+document.body.appendChild(renderer.domElement);
+
+const FOG=new THREE.Color(0.02,0.05,0.06);
+const scene=new THREE.Scene();
+const cam=new THREE.PerspectiveCamera(52, innerWidth/innerHeight, 0.1, 200);
+cam.position.set(0,1.35,7.0); cam.lookAt(0,1.12,-14);
+
+const post=new THREE.Scene(), postCam=new THREE.Camera();
+const postQuad=new THREE.Mesh(new THREE.PlaneGeometry(2,2),null); post.add(postQuad);
+let sceneRT=new THREE.WebGLRenderTarget(innerWidth*renderer.getPixelRatio(),innerHeight*renderer.getPixelRatio(),
+  {type:THREE.HalfFloatType,minFilter:THREE.LinearFilter,magFilter:THREE.LinearFilter});
+
+const NOISE=`
+  float h21(vec2 p){p=fract(p*vec2(123.34,456.21));p+=dot(p,p+45.32);return fract(p.x*p.y);}
+  float vnoise(vec2 p){vec2 i=floor(p),f=fract(p);f=f*f*(3.-2.*f);
+    float a=h21(i),b=h21(i+vec2(1,0)),c=h21(i+vec2(0,1)),d=h21(i+vec2(1,1));
+    return mix(mix(a,b,f.x),mix(c,d,f.x),f.y);}
+  float fbm(vec2 p){float s=0.,a=.5;for(int i=0;i<4;i++){s+=a*vnoise(p);p*=2.0;a*=.5;}return s;}
+`;
+
+// ── SKY + GROUND ────────────────────────────────────────────────────
+const sky=new THREE.Mesh(new THREE.PlaneGeometry(400,160),
+  new THREE.ShaderMaterial({depthWrite:false,
+    uniforms:{top:{value:new THREE.Color(0.01,0.02,0.05)},mid:{value:new THREE.Color(0.03,0.06,0.09)},
+              hor:{value:FOG.clone()},warm:{value:new THREE.Color(0.10,0.10,0.20)}},
+    vertexShader:`varying vec2 vUv; void main(){vUv=uv; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.);}`,
+    fragmentShader:`precision highp float; varying vec2 vUv; uniform vec3 top,mid,hor,warm;
+      void main(){float y=vUv.y; vec3 c=mix(hor,mid,smoothstep(0.0,0.35,y));
+        c=mix(c,top,smoothstep(0.3,1.0,y)); c+=warm*exp(-pow((y-0.04)/0.10,2.0))*0.5;
+        gl_FragColor=vec4(c,1.0);}`}));
+sky.position.set(0,60,-70); scene.add(sky);
+
+const ground=new THREE.Mesh(new THREE.PlaneGeometry(400,400),
+  new THREE.ShaderMaterial({
+    uniforms:{cNear:{value:new THREE.Color(0.012,0.04,0.022)},cFar:{value:FOG.clone()},
+              fogColor:{value:FOG.clone()},fogNear:{value:6.0},fogFar:{value:40.0}},
+    vertexShader:`varying vec3 vW; varying float vFog;
+      void main(){vW=position; vec4 mv=modelViewMatrix*vec4(position,1.0); vFog=-mv.z;
+        gl_Position=projectionMatrix*mv;}`,
+    fragmentShader:`precision highp float; varying vec3 vW; varying float vFog;
+      uniform vec3 cNear,cFar,fogColor; uniform float fogNear,fogFar;
+${NOISE}
+      void main(){float pch=fbm(vW.xz*0.25);
+        vec3 c=mix(cNear,cFar,smoothstep(0.0,40.0,length(vW.xz)*0.5)); c*=0.7+0.5*pch;
+        c=mix(c,fogColor,smoothstep(fogNear,fogFar,vFog));
+        gl_FragColor=vec4(c,1.0);}`}));
+ground.rotation.x=-Math.PI/2; scene.add(ground);
+
+// ── PLANTS ──────────────────────────────────────────────────────────
+const SPCOL=[ [1.0,0.26,0.42], [0.58,0.26,1.0], [1.0,0.46,0.13] ];   // spring / summer(violet, more sat) / autumn
+const SPWIN=[ [55,110,170], [140,185,245], [235,275,325] ];
+const GREEN={
+  grass:[[0.015,0.06,0.025],[0.07,0.24,0.10]],
+  mound:[[0.010,0.05,0.06 ],[0.05,0.17,0.16]],
+  cushion:[[0.012,0.055,0.04],[0.06,0.20,0.12]],
+  spire:[[0.020,0.07,0.030],[0.10,0.30,0.12]],
+  umbel:[[0.018,0.06,0.030],[0.08,0.22,0.10]],
+  daisy:[[0.020,0.07,0.030],[0.09,0.26,0.11]],
+};
+const R=Math.random;
+function jit(c,a){return [Math.max(0,c[0]+(R()*2-1)*a),Math.max(0,c[1]+(R()*2-1)*a),Math.max(0,c[2]+(R()*2-1)*a)];}
+function gauss(){return (R()+R()+R()-1.5)/1.5;}
+
+const S=[]; const STRIDE=23;
+function push(x,y,z,w,h,bend,arch,shade,flower,deep,lit,fcol,win,shape){
+  S.push(x,y,z, w,h, bend, R(), arch, shade, flower, deep[0],deep[1],deep[2], lit[0],lit[1],lit[2],
+         fcol[0],fcol[1],fcol[2], win[0],win[1],win[2], shape);
+}
+function emitPlant(cx,cz,arch,spec){
+  const g=GREEN[arch], fc=SPCOL[spec], win=SPWIN[spec];
+  const D=()=>jit(g[0],0.01), L=()=>jit(g[1],0.04);
+  if(arch==='grass'){
+    const n=5+(R()*6|0);
+    for(let k=0;k<n;k++){const dx=gauss()*0.12,dz=gauss()*0.12;
+      push(cx+dx,0,cz+dz, 0.045+R()*0.035, 0.5+R()*0.8, (R()*2-1)*0.5, 0, 0.6+R()*0.6,
+           R()<0.10?0.7:0.0, D(),L(),fc,win, 0);}                       // pointed blades
+  } else if(arch==='mound'){
+    const n=5+(R()*5|0);
+    for(let k=0;k<n;k++){const ang=R()*6.28, rr=R()*0.30;
+      push(cx+Math.cos(ang)*rr,0,cz+Math.sin(ang)*rr, 0.20+R()*0.18, 0.30+R()*0.34,
+           (R()*2-1)*0.9, 1, 0.6+R()*0.5, 0.0, D(),L(),fc,win, 1);}     // ROUNDED ovate leaves, splayed
+  } else if(arch==='cushion'){
+    const n=2+(R()*2|0);
+    for(let k=0;k<n;k++){const dx=gauss()*0.18,dz=gauss()*0.10;
+      push(cx+dx,0,cz+dz, 0.55+R()*0.45, 0.32+R()*0.26, (R()*2-1)*0.2, 5, 0.55+R()*0.4, 0.0, D(),L(),fc,win, 5);} // low DOME
+    for(let k=0;k<3;k++){const dx=gauss()*0.2,dz=gauss()*0.15;
+      push(cx+dx,0,cz+dz, 0.16+R()*0.12, 0.22+R()*0.2, (R()*2-1)*0.8, 1, 0.6+R()*0.4, 0.0, D(),L(),fc,win, 1);}
+  } else if(arch==='spire'){
+    const n=1+(R()*2|0);
+    for(let k=0;k<n;k++){const dx=gauss()*0.07,dz=gauss()*0.07;
+      push(cx+dx,0,cz+dz, 0.05+R()*0.05, 1.5+R()*1.4, (R()*2-1)*0.35, 2, 0.7+R()*0.5,  // varied width + curve
+           1.0, D(),L(),fc,win, 2);}
+    for(let k=0;k<4;k++){const dx=gauss()*0.13,dz=gauss()*0.13;
+      push(cx+dx,0,cz+dz, 0.18+R()*0.14, 0.3+R()*0.3, (R()*2-1)*0.8, 1, 0.6+R()*0.4, 0.0, D(),L(),fc,win, 1);} // rounded basal
+  } else if(arch==='umbel'){
+    const ball=0.7+R()*0.6;
+    push(cx,0,cz, 0.04+R()*0.03, 1.0+R()*0.8, (R()*2-1)*0.18, 3, 0.7+R()*0.4, ball, D(),L(),fc,win, 3); // stem + ROUND ball
+    for(let k=0;k<3;k++){const dx=gauss()*0.1,dz=gauss()*0.1;
+      push(cx+dx,0,cz+dz, 0.16+R()*0.12, 0.26+R()*0.24, (R()*2-1)*0.8, 1, 0.55+R()*0.4, 0.0, D(),L(),fc,win, 1);}
+  } else { // daisy
+    const n=5+(R()*5|0);
+    for(let k=0;k<n;k++){const dx=gauss()*0.16,dz=gauss()*0.16;
+      push(cx+dx,0,cz+dz, 0.07+R()*0.06, 0.42+R()*0.5, (R()*2-1)*0.6, 4, 0.6+R()*0.5,
+           R()<0.7?1.0:0.0, D(),L(),fc,win, 4);}                        // rounded bush
+  }
+}
+function pickArch(){const r=R();
+  return r<0.22?'grass':r<0.44?'mound':r<0.60?'cushion':r<0.80?'daisy':r<0.91?'spire':'umbel';}
+const NPMAX=24000, NBEDS=95;
+for(let b=0;b<NBEDS && S.length/STRIDE<NPMAX;b++){
+  const z=THREE.MathUtils.lerp(6.5,-34, Math.pow(R(),0.6));
+  const xs=THREE.MathUtils.mapLinear(z,6.5,-34, 11,40);
+  const cx=(R()*2-1)*xs, rad=THREE.MathUtils.lerp(0.5,1.7,R());        // tighter drifts
+  const arch=pickArch(), spec=R()<0.55? (z>1?0:1) : (R()*3|0);
+  const count=6+(R()*18|0);
+  for(let p=0;p<count && S.length/STRIDE<NPMAX;p++) emitPlant(cx+gauss()*rad, z+gauss()*rad, arch, spec);
+}
+for(let i=0;S.length/STRIDE<NPMAX && i<700;i++){
+  const z=THREE.MathUtils.lerp(6.5,-34, Math.pow(R(),0.55));
+  const xs=THREE.MathUtils.mapLinear(z,6.5,-34, 12,42);
+  emitPlant((R()*2-1)*xs, z, 'grass', R()*3|0);
+}
+const NP=S.length/STRIDE, arr=Float32Array.from(S);
+function slice(off,size){const a=new Float32Array(NP*size);
+  for(let i=0;i<NP;i++)for(let j=0;j<size;j++)a[i*size+j]=arr[i*STRIDE+off+j]; return a;}
+
+const baseQ=new THREE.PlaneGeometry(1,1); baseQ.translate(0,0.5,0);
+const geo=new THREE.InstancedBufferGeometry();
+geo.index=baseQ.index; geo.attributes.position=baseQ.attributes.position; geo.attributes.uv=baseQ.attributes.uv;
+geo.instanceCount=NP;
+geo.setAttribute('iPos',  new THREE.InstancedBufferAttribute(slice(0,3),3));
+geo.setAttribute('iScale',new THREE.InstancedBufferAttribute(slice(3,2),2));
+geo.setAttribute('iBend', new THREE.InstancedBufferAttribute(slice(5,1),1));
+geo.setAttribute('iSeed', new THREE.InstancedBufferAttribute(slice(6,1),1));
+geo.setAttribute('iArch', new THREE.InstancedBufferAttribute(slice(7,1),1));
+geo.setAttribute('iShade',new THREE.InstancedBufferAttribute(slice(8,1),1));
+geo.setAttribute('iFlower',new THREE.InstancedBufferAttribute(slice(9,1),1));
+geo.setAttribute('iDeep', new THREE.InstancedBufferAttribute(slice(10,3),3));
+geo.setAttribute('iLit',  new THREE.InstancedBufferAttribute(slice(13,3),3));
+geo.setAttribute('iFcol', new THREE.InstancedBufferAttribute(slice(16,3),3));
+geo.setAttribute('iWin',  new THREE.InstancedBufferAttribute(slice(19,3),3));
+geo.setAttribute('iShape',new THREE.InstancedBufferAttribute(slice(22,1),1));
+
+const strokeMat=new THREE.ShaderMaterial({
+  transparent:true, depthTest:true, depthWrite:false, side:THREE.DoubleSide,
+  uniforms:{ day:{value:0}, growth:{value:0}, time:{value:0}, camRight:{value:new THREE.Vector3(1,0,0)},
+             fogColor:{value:FOG.clone()}, fogNear:{value:6.0}, fogFar:{value:40.0} },
+  vertexShader:`
+    attribute vec3 iPos,iDeep,iLit,iFcol,iWin; attribute vec2 iScale;
+    attribute float iBend,iSeed,iArch,iShade,iFlower,iShape;
+    uniform float day,growth,time; uniform vec3 camRight;
+    varying vec2 vUv; varying float vFog,vShape,vShade,vSeed,vFlower,vE;
+    varying vec3 vDeep,vLit,vFcol;
+    float wstate(float d,vec3 w){ if(d<w.x||d>w.z) return 0.0;
+      return smoothstep(w.x,w.y,d)*(1.0-smoothstep(w.y,w.z,d)); }
+    void main(){
+      vUv=uv; vShape=iShape; vShade=iShade; vSeed=iSeed; vFlower=iFlower;
+      vDeep=iDeep; vLit=iLit; vFcol=iFcol; vE=wstate(day,iWin)*(0.5+0.5*iSeed);
+      float w=iScale.x, hgt=iScale.y*(0.16+0.84*growth);
+      float sway=sin(time*0.6+iSeed*30.0)*0.025*uv.y;
+      float bx=(uv.x-0.5)*w + sway + iBend*uv.y*uv.y;
+      vec3 world=iPos + camRight*bx + vec3(0.0,1.0,0.0)*(uv.y*hgt);
+      vec4 mv=viewMatrix*vec4(world,1.0); vFog=-mv.z;
+      gl_Position=projectionMatrix*mv;
+    }`,
+  fragmentShader:`precision highp float;
+    varying vec2 vUv; varying float vFog,vShape,vShade,vSeed,vFlower,vE;
+    varying vec3 vDeep,vLit,vFcol;
+    uniform vec3 fogColor; uniform float fogNear,fogFar;
+    void main(){
+      float y=clamp(vUv.y,0.0,1.0); int Sh=int(vShape+0.5);
+      // half-width(y) silhouette per shape — this is where roundness lives
+      float hw;
+      if(Sh==1) hw=pow(sin(3.14159*y),0.55);                      // leaf: ovate, rounded both ends
+      else if(Sh==2) hw=(1.0-smoothstep(0.30,1.0,y)*0.65)*0.55;   // stem: slim, soft tip
+      else if(Sh==3){ float stem=step(y,0.80)*0.13;
+                      float ball=sqrt(max(0.0,1.0-pow((y-0.85)/0.16,2.0)))*step(0.66,y);
+                      hw=max(stem,ball); }                         // stem + round bloom ball
+      else if(Sh==4) hw=pow(sin(3.14159*clamp(y*0.82+0.13,0.0,1.0)),0.5); // bush: soft rounded
+      else if(Sh==5) hw=sqrt(max(0.0,1.0-y*y));                   // dome / cushion
+      else hw=1.0-smoothstep(0.12,1.0,y);                          // blade: pointed
+      float ax=abs(vUv.x-0.5)*2.0;
+      float soft=smoothstep(hw, max(0.0,hw-0.20), ax);
+      if(soft<0.01 || hw<0.006) discard;
+
+      vec3 green=mix(vDeep,vLit,smoothstep(0.0,1.0,y))*vShade;
+      float tip = (Sh==3)? smoothstep(0.66,0.90,y) : (Sh==2)? smoothstep(0.5,1.0,y) : smoothstep(0.6,0.94,y);
+      vec3 col=green + vFcol*tip*vE*vFlower*3.6;                   // gentler so violet keeps colour
+      float fog=smoothstep(fogNear,fogFar,vFog);
+      col=mix(col,fogColor,fog);
+      gl_FragColor=vec4(col, soft*(1.0-fog*0.7));
+    }`
+});
+const strokes=new THREE.Mesh(geo,strokeMat); strokes.frustumCulled=false; scene.add(strokes);
+
+// ── POST ────────────────────────────────────────────────────────────
+const postU={src:{value:null},res:{value:new THREE.Vector2(innerWidth,innerHeight)},bloom:{value:1.0}};
+const presentMat=new THREE.ShaderMaterial({uniforms:postU,
+  vertexShader:`varying vec2 vUv; void main(){vUv=uv; gl_Position=vec4(position,1.);}`,
+  fragmentShader:`precision highp float; varying vec2 vUv;
+    uniform sampler2D src; uniform vec2 res; uniform float bloom;
+    vec3 aces(vec3 x){return clamp((x*(2.51*x+0.03))/(x*(2.43*x+0.59)+0.14),0.,1.);}
+    void main(){
+      vec3 base=texture2D(src,vUv).rgb; vec3 b=vec3(0.); float tot=0.;
+      for(int i=1;i<=10;i++){float fr=float(i); float rad=fr*1.1/res.y; float w=1.0/(fr*fr);
+        for(int k=0;k<8;k++){float a=float(k)/8.*6.2831; b+=texture2D(src,vUv+vec2(cos(a),sin(a))*rad).rgb*w; tot+=w;}}
+      b/=tot; b=max(b-0.11,0.0)*1.25;
+      vec3 col=base + b*bloom;
+      col=aces(col*1.02); col=pow(col,vec3(0.92));
+      float v=1.0-0.5*smoothstep(0.2,1.3,length(vUv-0.5))*2.0; v=clamp(v,0.0,1.0);
+      gl_FragColor=vec4(col*v,1.0);
+    }`});
+
+// ── season + loop ───────────────────────────────────────────────────
+const SEASONS=[{n:'winter',t:0},{n:'spring',t:80},{n:'summer',t:172},{n:'autumn',t:264},{n:'winter',t:340}];
+function seasonName(d){for(let i=0;i<4;i++)if(d>=SEASONS[i].t&&d<SEASONS[i+1].t)return SEASONS[i].n;return'winter';}
+function smooth(a,b,x){x=Math.min(1,Math.max(0,(x-a)/(b-a)));return x*x*(3-2*x);}
+function growthOf(d){return smooth(35,150,d)*(1-smooth(250,345,d));}
+const _r=new THREE.Vector3();
+let last=null;
+function frame(t){
+  requestAnimationFrame(frame);
+  if(last===null)last=t; const dtr=Math.min((t-last)/1000,0.05); last=t;
+  if(!paused){ day+=speed*dtr; if(day>=YEAR){day-=YEAR; year++;} }
+  const g=growthOf(day);
+  _r.setFromMatrixColumn(cam.matrixWorld,0); _r.y=0; _r.normalize();
+  strokeMat.uniforms.camRight.value.copy(_r);
+  strokeMat.uniforms.day.value=day; strokeMat.uniforms.growth.value=Math.max(0.12,g); strokeMat.uniforms.time.value=t*0.001;
+  renderer.setRenderTarget(sceneRT); renderer.render(scene,cam);
+  postU.src.value=sceneRT.texture; postQuad.material=presentMat;
+  renderer.setRenderTarget(null); renderer.render(post,postCam);
+  document.getElementById('day').textContent=Math.floor(day);
+  document.getElementById('year').textContent=year;
+  document.getElementById('season').textContent=seasonName(day);
+}
+requestAnimationFrame(frame);
+window.__setDay=v=>{day=v;}; window.__pause=v=>{paused=v;};
+
+addEventListener('resize',()=>{
+  renderer.setSize(innerWidth,innerHeight);
+  cam.aspect=innerWidth/innerHeight; cam.updateProjectionMatrix();
+  postU.res.value.set(innerWidth,innerHeight);
+  sceneRT.setSize(innerWidth*renderer.getPixelRatio(),innerHeight*renderer.getPixelRatio());
+});
+addEventListener('keydown',e=>{
+  if(e.code==='Space'){paused=!paused;e.preventDefault();}
+  if(e.code==='ArrowUp')speed=Math.min(speed*1.3,90);
+  if(e.code==='ArrowDown')speed=Math.max(speed/1.3,1);
+});
+</script>
+</body>
+</html>

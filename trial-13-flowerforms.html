@@ -1,0 +1,864 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>GardenOS — A Garden Through Time</title>
+<style>
+  html,body{margin:0;height:100%;background:#cdd6d2;overflow:hidden;
+    font-family:-apple-system,Inter,system-ui,sans-serif;color:#20302a}
+  canvas{display:block}
+  #hud{position:fixed;left:20px;bottom:18px;z-index:10;font-size:12px;letter-spacing:.05em;
+    line-height:1.55;text-shadow:0 1px 6px rgba(255,255,255,.6);opacity:.85;pointer-events:none}
+  #season{font-size:11px;text-transform:uppercase;letter-spacing:.24em;opacity:.6}
+  #ev{font-size:11px;opacity:.72;margin-top:2px;min-height:14px}
+  #title{position:fixed;right:20px;top:18px;z-index:10;text-align:right;font-size:11px;
+    letter-spacing:.2em;text-transform:uppercase;opacity:.45;text-shadow:0 1px 6px rgba(255,255,255,.6)}
+  #hint{position:fixed;left:20px;top:18px;z-index:10;font-size:11px;letter-spacing:.06em;
+    opacity:.4;text-shadow:0 1px 6px rgba(255,255,255,.6)}
+</style>
+</head>
+<body>
+<div id="title">GardenOS · Trial 13<br><span style="opacity:.6">flower forms · full beds</span></div>
+<div id="hint">space · pause   ·   ↑↓ · year speed</div>
+<div id="hud"><div id="season">winter</div><div>day <b id="day">0</b> / 365 · year <b id="year">1</b></div><div id="ev"></div></div>
+<script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
+<script>
+/* ───────────────────────────────────────────────────────────────
+   GardenOS — Trial 10 · The Merge (daytime master)
+   Canopy (09) + woodland floor (07d) + living layers (08: dapple +
+   pollinators) in ONE daytime scene. Enclosing canopy framing,
+   organic brown branching trees, a proper maple autumn.
+   ─────────────────────────────────────────────────────────────── */
+
+const YEAR=365;
+let day=0, year=1, speed=10, paused=false;
+
+const renderer=new THREE.WebGLRenderer({antialias:true});
+// device quality scaling — fewer instances + lower pixel ratio on phones so it runs smooth
+const MOBILE = Math.min(innerWidth,innerHeight)<620 || /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+const Q = MOBILE ? 0.5 : 1.0;
+renderer.setPixelRatio(Math.min(devicePixelRatio, MOBILE?1.2:1.6));
+renderer.setSize(innerWidth,innerHeight);
+document.body.appendChild(renderer.domElement);
+
+const FOG=new THREE.Color(0.80,0.85,0.85);
+const scene=new THREE.Scene();
+const cam=new THREE.PerspectiveCamera(62, innerWidth/innerHeight, 0.1, 400);
+// responsive framing: portrait phones get a wider FOV + pulled-back camera so the
+// side beds stay in frame instead of cropping to just the path
+function layout(){
+  const a=innerWidth/innerHeight; cam.aspect=a;
+  const t=Math.min(1,Math.max(0,(1.5-a)/(1.5-0.45)));   // 0 landscape → 1 tall portrait
+  cam.fov=60+24*t;                                       // 60 → 84
+  cam.position.set(0, 1.5+0.15*t, 8.5+4.2*t);            // pull back for width
+  cam.lookAt(0, 4.4+1.6*t, -16);                          // look higher on portrait → less empty foreground
+  cam.updateProjectionMatrix();
+}
+layout();
+
+const post=new THREE.Scene(), postCam=new THREE.Camera();
+const postQuad=new THREE.Mesh(new THREE.PlaneGeometry(2,2),null); post.add(postQuad);
+let sceneRT=new THREE.WebGLRenderTarget(innerWidth*renderer.getPixelRatio(),innerHeight*renderer.getPixelRatio(),
+  {type:THREE.HalfFloatType,minFilter:THREE.LinearFilter,magFilter:THREE.LinearFilter});
+
+const NOISE=`
+  float h21(vec2 p){p=fract(p*vec2(123.34,456.21));p+=dot(p,p+45.32);return fract(p.x*p.y);}
+  float vnoise(vec2 p){vec2 i=floor(p),f=fract(p);f=f*f*(3.-2.*f);
+    float a=h21(i),b=h21(i+vec2(1,0)),c=h21(i+vec2(0,1)),d=h21(i+vec2(1,1));
+    return mix(mix(a,b,f.x),mix(c,d,f.x),f.y);}
+  float fbm(vec2 p){float s=0.,a=.5;for(int i=0;i<4;i++){s+=a*vnoise(p);p*=2.0;a*=.5;}return s;}`;
+const DAPPLE=`float dapple(vec2 wxz,float tm){ float d=fbm(wxz*0.5+vec2(tm*0.05,tm*0.03));
+  d=mix(d,fbm(wxz*1.2-vec2(tm*0.04,0.0)),0.4); return smoothstep(0.34,0.72,d); }`;
+// a coherent breeze: gusts roll across the garden, taller things sway more
+const WIND=`vec3 windOffset(vec3 p, float tm, float amp){
+  float gust=0.6+0.4*sin(tm*0.4 + p.x*0.04 + p.z*0.03);
+  float r=sin(tm*1.6 + p.x*0.5 + p.z*0.6) + 0.5*sin(tm*2.7 + p.z*0.9 + p.x*0.2);
+  float a=amp*gust; return vec3(a*r, 0.0, a*0.45*r); }`;
+
+const R=Math.random; function gauss(){return (R()+R()+R()-1.5)/1.5;}
+
+// ── garden structure: lawn / earth beds / stone path (shared JS+GLSL) ─
+// beds = side borders (|x| beyond a wavy edge); path winds up the centre; patio in front
+function bedEdgeJS(z){return 3.2+Math.sin(z*0.7)*0.6+Math.sin(z*1.9+1.0)*0.4;}
+function pathCJS(z){return Math.sin(z*0.18)*1.6;}
+function inBed(x,z){return z<4.4 && Math.abs(x)>bedEdgeJS(z) && Math.abs(x)<bedEdgeJS(z)+5.8;}
+const BATH=[-1.7,-0.8];                                 // bird-bath: open near lawn, left of the path
+function nearBath(x,z){return (x-BATH[0])*(x-BATH[0])+(z-BATH[1])*(z-BATH[1])<1.3;}
+const ZONE=`
+  float bedEdge(float z){return 3.2+sin(z*0.7)*0.6+sin(z*1.9+1.0)*0.4;}
+  float pathC(float z){return sin(z*0.18)*1.6;}`;
+
+// ── SKY ─────────────────────────────────────────────────────────────
+const sky=new THREE.Mesh(new THREE.PlaneGeometry(900,360),
+  new THREE.ShaderMaterial({depthWrite:false,
+    uniforms:{top:{value:new THREE.Color(0.50,0.65,0.82)},hor:{value:new THREE.Color(0.90,0.91,0.90)}},
+    vertexShader:`varying vec2 vUv; void main(){vUv=uv; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.);}`,
+    fragmentShader:`precision highp float; varying vec2 vUv; uniform vec3 top,hor;
+      void main(){ gl_FragColor=vec4(mix(hor,top,smoothstep(0.0,0.85,vUv.y)),1.0);}`}));
+sky.position.set(0,40,-140); scene.add(sky);
+
+// ── GROUND (lawn + patio, dappled) ──────────────────────────────────
+const groundU={lawn:{value:new THREE.Color(0.30,0.44,0.18)},patio:{value:new THREE.Color(0.55,0.53,0.47)},
+  fogColor:{value:FOG.clone()},fogNear:{value:9.0},fogFar:{value:95.0},time:{value:0},dap:{value:0.6}};
+const ground=new THREE.Mesh(new THREE.PlaneGeometry(500,500),
+  new THREE.ShaderMaterial({uniforms:groundU,
+    vertexShader:`varying vec3 vWorld; varying float vFog;
+      void main(){ vec4 wp=modelMatrix*vec4(position,1.0); vWorld=wp.xyz;
+        vec4 mv=modelViewMatrix*vec4(position,1.0); vFog=-mv.z;
+        gl_Position=projectionMatrix*mv;}`,
+    fragmentShader:`precision highp float; varying vec3 vWorld; varying float vFog;
+      uniform vec3 lawn,patio,fogColor; uniform float fogNear,fogFar,time,dap;
+${NOISE}
+${DAPPLE}
+${ZONE}
+      void main(){
+        float x=vWorld.x, z=vWorld.z;
+        vec3 stone=patio*(0.82+0.32*fbm(vWorld.xz*0.8));
+        vec3 lawnC=lawn*(0.78+0.4*fbm(vWorld.xz*0.9));
+        vec3 earth=mix(vec3(0.10,0.08,0.055),vec3(0.10,0.12,0.06),fbm(vWorld.xz*2.2))*(0.7+0.5*fbm(vWorld.xz*1.5)); // dark mulch + leaf litter
+        float be=bedEdge(z), pc=pathC(z);
+        vec3 c;
+        if(z>4.4) c=stone;                                  // patio
+        else if(abs(x)>be) c=earth;                          // garden beds (soil)
+        else if(abs(x-pc)<0.9) c=stone;                      // path winding up the middle
+        else c=lawnC;                                         // mown lawn
+        float dp=dapple(vWorld.xz,time); c*=mix(1.0-0.35*dap,1.0+0.5*dap,dp);
+        c=mix(c,fogColor,smoothstep(fogNear,fogFar,vFog));
+        gl_FragColor=vec4(c,1.0);}`}));
+ground.rotation.x=-Math.PI/2; scene.add(ground);
+
+// ── BIRD BATH (cottage-garden focal ornament) ───────────────────────
+function stoneMat(col){ return new THREE.ShaderMaterial({
+  uniforms:{c:{value:new THREE.Color(col)},fogColor:{value:FOG.clone()},fogNear:{value:9.0},fogFar:{value:95.0}},
+  vertexShader:`varying vec3 vN; varying float vFog;
+    void main(){ vN=mat3(modelMatrix)*normal; vec4 mv=modelViewMatrix*vec4(position,1.0); vFog=-mv.z;
+      gl_Position=projectionMatrix*mv; }`,
+  fragmentShader:`precision highp float; varying vec3 vN; varying float vFog; uniform vec3 c,fogColor; uniform float fogNear,fogFar;
+    void main(){ float l=0.55+0.45*clamp(normalize(vN).y,0.0,1.0); vec3 col=c*l;
+      col=mix(col,fogColor,smoothstep(fogNear,fogFar,vFog)); gl_FragColor=vec4(col,1.0); }`}); }
+const bb=new THREE.Group();
+function bbPart(geo,y){ const m=new THREE.Mesh(geo,stoneMat(0x8c857a)); m.position.y=y; bb.add(m); }
+bbPart(new THREE.CylinderGeometry(0.30,0.36,0.10,16),0.05);   // base
+bbPart(new THREE.CylinderGeometry(0.10,0.16,0.95,12),0.55);   // pedestal
+bbPart(new THREE.CylinderGeometry(0.46,0.30,0.16,20),1.05);   // bowl
+const water=new THREE.Mesh(new THREE.CircleGeometry(0.42,22),new THREE.ShaderMaterial({
+  uniforms:{time:{value:0},fogColor:{value:FOG.clone()},fogNear:{value:9.0},fogFar:{value:95.0}},
+  vertexShader:`varying vec2 vP; varying float vFog; void main(){ vP=position.xy;
+    vec4 mv=modelViewMatrix*vec4(position,1.0); vFog=-mv.z; gl_Position=projectionMatrix*mv; }`,
+  fragmentShader:`precision highp float; varying vec2 vP; varying float vFog; uniform float time,fogNear,fogFar; uniform vec3 fogColor;
+    void main(){ float rip=0.5+0.5*sin(length(vP)*40.0-time*2.0);
+      vec3 col=mix(vec3(0.42,0.55,0.62),vec3(0.78,0.86,0.9),rip*0.5);   // sky-reflecting water + ripple
+      col=mix(col,fogColor,smoothstep(fogNear,fogFar,vFog)); gl_FragColor=vec4(col,1.0); }`}));
+water.rotation.x=-Math.PI/2; water.position.y=1.10; bb.add(water);
+bb.position.set(BATH[0],0,BATH[1]); bb.scale.setScalar(1.4); scene.add(bb);
+
+// ── CANOPY leaf-dabs (enclosing) + maple autumn ─────────────────────
+// each leaf: base green + autumn MID + autumn LATE stops (progression green→mid→late)
+const MASSES=[
+  // each tree: its own autumn TONE (mid→late) and its own TIMING (at = how late it turns)
+  {c:[8.7,7.0,-12],r:[7,4.7,4.7],n:9000, g:[0.10,0.26,0.10], mid:[0.90,0.68,0.18], late:[0.82,0.55,0.14], tree:1, at:0.10}, // R tree — GOLD, early
+  {c:[-10,6.6,-13],r:[7,4.7,4.7],n:8500, g:[0.10,0.27,0.10], mid:[0.92,0.56,0.14], late:[0.80,0.36,0.10], tree:1, at:0.45}, // L tree — ORANGE, late
+  {c:[0,5.6,-27],  r:[20,6,7],  n:8000, g:[0.09,0.23,0.10], mid:[0.09,0.23,0.10], late:[0.09,0.23,0.10], ever:1},          // back wall — EVERGREEN hedge
+  {c:[-1.5,3.8,-9],r:[4.3,3.4,3.4],n:13000,g:[0.11,0.30,0.12], mid:[0.86,0.62,0.16], late:[0.72,0.40,0.14], tree:1, apple:1, at:0.28}, // APPLE — russet, bigger
+  {c:[-6.3,2.9,-9.5],r:[2.5,2.3,1.9],n:4500,g:[0.50,0.60,0.12], mid:[0.95,0.52,0.10], late:[0.86,0.13,0.06], maple:1, tree:1, at:0.60}, // MAPLE — SCARLET, latest
+  {c:[6.4,3.2,-9.5],r:[2.6,2.3,2.2],n:4000, g:[0.13,0.31,0.12], mid:[0.82,0.46,0.14], late:[0.70,0.26,0.12], tree:1, cherry:1, at:0.32}, // CHERRY — warm red
+  {c:[3.3,1.35,-6],r:[1.4,1.3,1.2],n:1800, g:[0.07,0.20,0.10], mid:[0.07,0.20,0.10], late:[0.07,0.20,0.10], ever:1}, // EVERGREEN box
+  {c:[-3.5,1.25,-5.5],r:[1.2,1.1,1.0],n:1500,g:[0.06,0.18,0.09], mid:[0.06,0.18,0.09], late:[0.06,0.18,0.09], ever:1}, // EVERGREEN box
+  {c:[7.8,1.5,-5], r:[2.0,1.6,1.4],n:1700, g:[0.16,0.36,0.13], mid:[0.85,0.6,0.12], late:[0.6,0.3,0.1], bloss:1, at:0.2},
+  {c:[-8.6,1.4,-5],r:[1.9,1.5,1.3],n:1600, g:[0.14,0.33,0.12], mid:[0.85,0.6,0.12], late:[0.6,0.3,0.1], bloss:1, at:0.5},
+];
+const LC=[]; const BR=[]; const LSTR=19;
+// leaf shape per mass: 0 round · 1 oval · 2 maple · 3 lobed (oak-ish)
+MASSES.forEach((m,mi)=>{ m._lf = m.maple?2 : ((m.cherry||m.apple)?1 : (m.tree ? (mi%2?3:0) : 1)); });
+function pushLeaf(x,y,z,size,g,mid,late,turn,bloss,shade,lf,ever){
+  LC.push(x,y,z,size,R(), g[0]*(0.7+0.6*R()),g[1]*(0.75+0.5*R()),g[2]*(0.7+0.6*R()),
+          mid[0],mid[1],mid[2], late[0],late[1],late[2], turn,bloss,shade,lf,ever);
+}
+function seg(p0,p1,w0,w1,c){ BR.push(p0.x,p0.y,p0.z, p1.x,p1.y,p1.z, w0,w1, c[0],c[1],c[2]); }
+const V=THREE.Vector3;
+function leafAt(x,y,z,m){
+  const yy=Math.max(0.2,y);
+  const hN=THREE.MathUtils.clamp((yy-(m.c[1]-m.r[1]))/(2*m.r[1]),0,1);
+  const size=THREE.MathUtils.lerp(0.22,0.5,R())*(m.maple?0.85:1.0);
+  let lf=m._lf; if(!m.maple && !m.cherry && !m.apple && R()<0.12) lf=[0,1,3][R()*3|0];
+  const bl=m.apple?3:(m.cherry?2:(m.bloss?1:0));
+  const turn=m.ever?0.0:Math.min(0.98,(m.at||0.0)+R()*0.28);     // per-tree timing + per-leaf stagger
+  pushLeaf(x,yy,z,size,m.g,m.mid,m.late,turn,bl,0.6+0.5*hN,lf,m.ever?1:0);
+}
+// a tree: trunk → many limbs → deep recursive branching; LEAVES tuft on the outer twigs
+function branchRec(p,dir,len,w,depth,m,per,cr){
+  const p1=p.clone().addScaledVector(dir,len);
+  seg(p,p1,w,w*0.7,[0.20+0.10*R(),0.13+0.06*R(),0.07+0.04*R()]);
+  if(depth<=2){ for(let k=0;k<per;k++) leafAt(p1.x+gauss()*cr, p1.y+gauss()*cr*0.8, p1.z+gauss()*cr*0.8, m); } // leaves over the outer 3 twig levels → full
+  if(depth<=0) return;
+  const k=2+(R()<0.5?1:0);
+  for(let i=0;i<k;i++){
+    const nd=dir.clone();
+    nd.x+=(R()*2-1)*0.6; nd.z+=(R()*2-1)*0.6; nd.y+=(R()-0.45)*0.4; nd.normalize();
+    branchRec(p1,nd,len*0.74,w*0.66,depth-1,m,per,cr);
+  }
+}
+function growTree(m,mn){
+  const base=new V(m.c[0],0,m.c[2]);
+  const top=new V(m.c[0]+gauss()*0.2, Math.max(0.6,m.c[1]-m.r[1]*0.5), m.c[2]+gauss()*0.2);
+  const tw=Math.max(0.11,m.r[0]*0.045);
+  seg(base,top,tw,tw*0.82,[0.22,0.14,0.08]);                  // trunk
+  const mains=5+(R()*4|0), per=Math.max(3,(mn/(mains*150))|0), cr=Math.max(0.3,m.r[0]*0.15);
+  for(let b=0;b<mains;b++){
+    const ang=(b/mains)*6.2831+R()*1.0;
+    const dir=new V(Math.cos(ang)*0.7, 0.6+R()*0.4, Math.sin(ang)*0.7).normalize();
+    branchRec(top,dir, m.r[0]*0.34, tw*0.72, 5, m, per, cr);   // depth 5 = lots of twigs
+  }
+}
+// the apple tree: short gnarled trunk + spreading scaffold limbs (visible), then a
+// DENSE crown of leaves that covers its front; fruit hung through the lower crown
+const FR2=[];   // apples: x,y,z,size,seed
+function growApple(m,mn){
+  const base=new V(m.c[0],0,m.c[2]);
+  const trunkTop=new V(m.c[0]+gauss()*0.12, 1.6+R()*0.3, m.c[2]+gauss()*0.12);
+  seg(base,trunkTop, m.r[0]*0.085, m.r[0]*0.07,[0.24,0.15,0.08]);    // short, thick trunk
+  const mains=5+(R()*2|0);
+  for(let b=0;b<mains;b++){
+    const ang=(b/mains)*6.2831+R()*0.7;
+    const dir=new V(Math.cos(ang)*0.85, 0.5+R()*0.3, Math.sin(ang)*0.85).normalize();
+    // a gnarled scaffold limb with a couple of kinks
+    let p=trunkTop.clone(), d=dir.clone(), w=m.r[0]*0.05;
+    for(let s=0;s<3;s++){
+      const np=p.clone().addScaledVector(d, m.r[0]*0.32);
+      seg(p,np,w,w*0.7,[0.22,0.14,0.08]); p=np; w*=0.7;
+      d=d.clone(); d.x+=(R()*2-1)*0.5; d.y+=(R()-0.5)*0.4; d.z+=(R()*2-1)*0.5; d.normalize();
+    }
+  }
+  // dense crown (covers the front) — gaussian fill, slightly flattened
+  for(let i=0;i<mn;i++){
+    leafAt(m.c[0]+gauss()*m.r[0], m.c[1]+gauss()*m.r[1]*0.95, m.c[2]+gauss()*m.r[2], m);
+  }
+  // apples hung through the lower-front of the crown, where they read
+  const nApp=Math.max(12,(75*Q)|0);
+  for(let i=0;i<nApp;i++){
+    FR2.push(m.c[0]+gauss()*m.r[0]*0.8, m.c[1]-0.5+gauss()*m.r[1]*0.6, m.c[2]+Math.abs(gauss())*m.r[2]*0.65, 0.15+R()*0.10, R(), 0);
+  }
+  // windfall — fallen apples lying on the grass under the tree (late autumn)
+  const nFall=Math.max(6,(20*Q)|0);
+  for(let i=0;i<nFall;i++){
+    FR2.push(m.c[0]+gauss()*m.r[0]*0.9, 0.06, m.c[2]+0.8+Math.abs(gauss())*m.r[2]*0.8, 0.13+R()*0.07, R(), 1);
+  }
+}
+for(const m of MASSES){
+  const mn=m.n*Q|0;
+  if(m.apple){ growApple(m,mn); }
+  else if(m.tree){ growTree(m,mn); }
+  else { for(let i=0;i<mn;i++) leafAt(m.c[0]+gauss()*m.r[0], m.c[1]+gauss()*m.r[1], m.c[2]+gauss()*m.r[2], m); }
+}
+const NL=LC.length/LSTR, larr=Float32Array.from(LC);
+function ls(o,s){const a=new Float32Array(NL*s);for(let i=0;i<NL;i++)for(let j=0;j<s;j++)a[i*s+j]=larr[i*LSTR+o+j];return a;}
+const leafQ=new THREE.PlaneGeometry(1,1);
+const lgeo=new THREE.InstancedBufferGeometry();
+lgeo.index=leafQ.index; lgeo.attributes.position=leafQ.attributes.position; lgeo.attributes.uv=leafQ.attributes.uv;
+lgeo.instanceCount=NL;
+lgeo.setAttribute('iCenter',new THREE.InstancedBufferAttribute(ls(0,3),3));
+lgeo.setAttribute('iSize',new THREE.InstancedBufferAttribute(ls(3,1),1));
+lgeo.setAttribute('iSeed',new THREE.InstancedBufferAttribute(ls(4,1),1));
+lgeo.setAttribute('iG',new THREE.InstancedBufferAttribute(ls(5,3),3));
+lgeo.setAttribute('iMid',new THREE.InstancedBufferAttribute(ls(8,3),3));
+lgeo.setAttribute('iLate',new THREE.InstancedBufferAttribute(ls(11,3),3));
+lgeo.setAttribute('iTurn',new THREE.InstancedBufferAttribute(ls(14,1),1));
+lgeo.setAttribute('iBloss',new THREE.InstancedBufferAttribute(ls(15,1),1));
+lgeo.setAttribute('iShade',new THREE.InstancedBufferAttribute(ls(16,1),1));
+lgeo.setAttribute('iLeaf',new THREE.InstancedBufferAttribute(ls(17,1),1));
+lgeo.setAttribute('iEver',new THREE.InstancedBufferAttribute(ls(18,1),1));
+const leafMat=new THREE.ShaderMaterial({transparent:true,depthTest:true,depthWrite:true,alphaTest:0.4,side:THREE.DoubleSide,
+  uniforms:{day:{value:0},time:{value:0},camRight:{value:new THREE.Vector3()},camUp:{value:new THREE.Vector3()},
+            fogColor:{value:FOG.clone()},fogNear:{value:9.0},fogFar:{value:95.0}},
+  vertexShader:`attribute vec3 iCenter,iG,iMid,iLate; attribute float iSize,iSeed,iTurn,iBloss,iShade,iLeaf,iEver;
+    uniform float day,time; uniform vec3 camRight,camUp;
+    varying vec2 vUv; varying vec3 vCol; varying float vFog,vKill,vLeaf,vSeedF;
+${WIND}
+    float sm(float a,float b,float x){x=clamp((x-a)/(b-a),0.0,1.0);return x*x*(3.0-2.0*x);}
+    void main(){ vUv=uv; vLeaf=iLeaf; vSeedF=iSeed;
+      bool ev = iEver>0.5;
+      float leafOut = ev ? 1.0 : sm(58.0+iSeed*54.0, 108.0+iSeed*54.0, day); // evergreen always in leaf
+      float fall = ev ? 0.0 : sm(294.0+iTurn*34.0,336.0+iTurn*20.0,day);      // evergreen never drops
+      float blf=step(0.5,iBloss)*sm(50.0,72.0,day)*(1.0-sm(84.0,108.0,day)); // blossom before the leaves
+      float scale=max(leafOut*(1.0-fall), blf);                         // blossom fills the tree first
+      float turn = ev ? 0.0 : sm(262.0+iTurn*52.0,294.0+iTurn*52.0,day);     // evergreen never turns
+      vec3 aut = turn<0.5 ? mix(iG,iMid,turn*2.0) : mix(iMid,iLate,(turn-0.5)*2.0);
+      vec3 col=aut;
+      vec3 blossCol = iBloss>2.5 ? vec3(1.0,0.88,0.92) : (iBloss>1.5 ? vec3(1.0,0.58,0.74) : vec3(1.0,0.93,0.96)); // apple pale-pink / cherry pink / white
+      col=mix(col, blossCol, blf);
+      col=mix(col*vec3(1.15,1.18,0.9), col, smoothstep(0.2,0.9,leafOut)); // fresh pale flush → deepens
+      col*=iShade; vCol=col; vKill=scale;
+      float sc=iSize*(0.05+0.95*scale)*(1.0+blf*0.25);                   // grow from a tiny bud
+      vec2 q=uv-0.5;
+      float hf=clamp((iCenter.y-0.5)/8.0,0.0,1.0);                       // higher leaves sway more
+      vec3 world=iCenter+windOffset(iCenter,time,0.028+0.045*hf)+camRight*(q.x*sc)+camUp*(q.y*sc);
+      vec4 mv=viewMatrix*vec4(world,1.0); vFog=-mv.z;
+      gl_Position=projectionMatrix*mv; }`,
+  fragmentShader:`precision highp float; varying vec2 vUv; varying vec3 vCol; varying float vFog,vKill,vLeaf,vSeedF;
+    uniform vec3 fogColor; uniform float fogNear,fogFar;
+    void main(){ if(vKill<0.04) discard;
+      vec2 q=vUv-0.5;
+      float rot=vSeedF*6.2831, cs=cos(rot), sn=sin(rot);
+      vec2 p=mat2(cs,-sn,sn,cs)*q;                                       // random leaf rotation
+      float ang=atan(p.y,p.x), rr=length(p);
+      int L=int(vLeaf+0.5);
+      float edge;
+      if(L==1){ rr=length(p*vec2(1.0,1.6)); edge=0.5; }                  // oval
+      else if(L==2){ edge=0.5*(0.32+0.68*pow(max(0.0,cos(2.5*ang+1.57)),0.9)); } // maple — sharp 5 lobes
+      else if(L==3){ edge=0.5*(0.80+0.20*cos(7.0*ang)); }               // lobed (oak-ish)
+      else edge=0.5;                                                     // round
+      edge*=0.90+0.10*sin(ang*11.0+vSeedF*30.0);                         // ragged, porous edge
+      float a=smoothstep(edge,edge-0.10,rr); if(a<0.45) discard;
+      gl_FragColor=vec4(mix(vCol,fogColor,smoothstep(fogNear,fogFar,vFog)),1.0); }`});
+const leaves=new THREE.Mesh(lgeo,leafMat); leaves.frustumCulled=false; scene.add(leaves);
+
+// branches (thick-line camera-billboard, brown)
+const NE=BR.length/11, earr=Float32Array.from(BR);
+function es(o,s){const a=new Float32Array(NE*s);for(let i=0;i<NE;i++)for(let j=0;j<s;j++)a[i*s+j]=earr[i*11+o+j];return a;}
+const segQ=new THREE.PlaneGeometry(1,1); segQ.translate(0,0.5,0);
+const egeo=new THREE.InstancedBufferGeometry();
+egeo.index=segQ.index; egeo.attributes.position=segQ.attributes.position; egeo.attributes.uv=segQ.attributes.uv;
+egeo.instanceCount=NE;
+egeo.setAttribute('iP0',new THREE.InstancedBufferAttribute(es(0,3),3));
+egeo.setAttribute('iP1',new THREE.InstancedBufferAttribute(es(3,3),3));
+egeo.setAttribute('iW',new THREE.InstancedBufferAttribute(es(6,2),2));
+egeo.setAttribute('iCol',new THREE.InstancedBufferAttribute(es(8,3),3));
+const branchMat=new THREE.ShaderMaterial({side:THREE.DoubleSide,
+  uniforms:{fogColor:{value:FOG.clone()},fogNear:{value:9.0},fogFar:{value:95.0}},
+  vertexShader:`attribute vec3 iP0,iP1,iCol; attribute vec2 iW; varying vec3 vCol; varying float vFog;
+    void main(){ vCol=iCol;
+      vec3 P=mix(iP0,iP1,uv.y); float w=mix(iW.x,iW.y,uv.y);
+      vec3 dir=normalize(iP1-iP0); vec3 view=normalize(cameraPosition-P);
+      vec3 side=normalize(cross(dir,view));
+      vec3 world=P+side*((uv.x-0.5)*w);
+      vec4 mv=viewMatrix*vec4(world,1.0); vFog=-mv.z;
+      gl_Position=projectionMatrix*mv; }`,
+  fragmentShader:`precision highp float; varying vec3 vCol; varying float vFog;
+    uniform vec3 fogColor; uniform float fogNear,fogFar;
+    void main(){ gl_FragColor=vec4(mix(vCol,fogColor,smoothstep(fogNear,fogFar,vFog)),1.0);}`});
+const branches=new THREE.Mesh(egeo,branchMat); branches.frustumCulled=false; scene.add(branches);
+
+// ── A REAL PLANT PALETTE (London cottage / woodland border) ─────────
+// Each species: sh(shape) fol[deep,lit] fc(flower) win[start,peak,end] h[min,max]
+//   w[min,max] bnd cnt[min,max] spr fa(flowerAmt) wk(wake) sl(sleep) ev(evergreen) au(autumn foliage) wt(weight)
+// shapes: 0 blade 1 leaf 2 spire 3 ball 4 bush 5 dome 6 fern 7 flat-umbel
+function jit(c,a){return[Math.max(0,c[0]+(R()*2-1)*a),Math.max(0,c[1]+(R()*2-1)*a),Math.max(0,c[2]+(R()*2-1)*a)];}
+const P=(o)=>o;
+const LIB=[
+ // — woodland floor (low, shade) —
+ P({n:'hellebore',  sh:5,d:[.04,.13,.07],l:[.11,.26,.13],fc:[.86,.83,.78],win:[18,50,96], h:[.45,.62],w:[.18,.30],bnd:.2,cnt:[3,5],spr:.22,fa:.7, wk:0, sl:0,  ev:1,au:[.5,.36,.30],wt:3}),
+ P({n:'brunnera',   sh:1,d:[.07,.17,.11],l:[.22,.42,.28],fc:[.42,.55,1.0],win:[80,108,148],h:[.42,.60],w:[.18,.30],bnd:.6,cnt:[4,7],spr:.26,fa:.6, wk:72,sl:278,ev:0,au:[.60,.50,.22],wt:3}),
+ P({n:'pulmonaria', sh:1,d:[.08,.18,.10],l:[.24,.42,.24],fc:[.72,.38,.82],win:[55,85,128], h:[.38,.55],w:[.18,.28],bnd:.7,cnt:[4,6],spr:.24,fa:.6, wk:55,sl:268,ev:0,au:[.55,.45,.20],wt:2}),
+ P({n:'epimedium',  sh:1,d:[.08,.19,.09],l:[.26,.46,.20],fc:[1.0,.85,.32],win:[80,103,140],h:[.40,.55],w:[.12,.22],bnd:.8,cnt:[4,7],spr:.24,fa:.5, wk:78,sl:282,ev:0,au:[.62,.38,.16],wt:2}),
+ P({n:'heuchera',   sh:1,d:[.13,.06,.11],l:[.34,.15,.27],fc:[.95,.82,.86],win:[150,180,220],h:[.40,.60],w:[.18,.30],bnd:.5,cnt:[4,7],spr:.24,fa:.35,wk:35,sl:330,ev:1,au:[.30,.12,.20],wt:3}),
+ P({n:'bergenia',   sh:1,d:[.05,.16,.10],l:[.15,.34,.18],fc:[.95,.34,.55],win:[68,95,128], h:[.50,.72],w:[.30,.50],bnd:.4,cnt:[3,5],spr:.26,fa:.45,wk:0, sl:0,  ev:1,au:[.55,.30,.28],wt:2}),
+ P({n:'fern',       sh:6,d:[.06,.18,.08],l:[.18,.40,.16],fc:[0,0,0],     win:[0,1,2],     h:[.60,1.05],w:[.10,.18],bnd:.9,cnt:[4,7],spr:.22,fa:0,  wk:92,sl:276,ev:0,au:[.66,.50,.24],wt:2}),
+ P({n:'solomons',   sh:2,d:[.06,.18,.10],l:[.20,.44,.20],fc:[.95,.97,.95],win:[88,114,150],h:[.65,.95],w:[.05,.09],bnd:.5,cnt:[2,3],spr:.18,fa:.6, wk:82,sl:270,ev:0,au:[.80,.70,.30],wt:2}),
+ P({n:'ajuga',      sh:4,d:[.08,.16,.10],l:[.22,.40,.20],fc:[.40,.42,.92],win:[100,124,160],h:[.30,.45],w:[.10,.18],bnd:.5,cnt:[5,8],spr:.30,fa:.55,wk:60,sl:286,ev:1,au:[.40,.30,.30],wt:2}),
+ // — vertical accents (tall) —
+ P({n:'foxglove',   sh:2,d:[.06,.16,.07],l:[.18,.40,.16],fc:[.92,.42,.72],win:[122,150,196],h:[1.5,2.5],w:[.06,.10],bnd:.12,cnt:[1,2],spr:.08,fa:1.0,wk:72,sl:258,ev:0,au:[.60,.40,.20],wt:4}),
+ P({n:'verbascum',  sh:2,d:[.10,.16,.10],l:[.30,.40,.26],fc:[1.0,.85,.20],win:[150,185,232],h:[1.7,2.7],w:[.06,.10],bnd:.05,cnt:[1,1],spr:.06,fa:1.0,wk:70,sl:256,ev:0,au:[.60,.50,.25],wt:2}),
+ P({n:'veronicast', sh:2,d:[.06,.18,.08],l:[.20,.44,.18],fc:[.72,.62,.96],win:[182,212,252],h:[1.4,2.1],w:[.05,.08],bnd:.05,cnt:[1,2],spr:.07,fa:1.0,wk:75,sl:258,ev:0,au:[.60,.42,.20],wt:2}),
+ P({n:'ammi',       sh:7,d:[.07,.18,.08],l:[.20,.42,.16],fc:[.97,.97,.95],win:[160,196,242],h:[1.1,1.7],w:[.04,.07],bnd:.05,cnt:[1,2],spr:.10,fa:1.0,wk:85,sl:255,ev:0,au:[.70,.60,.30],wt:2}),
+ P({n:'agapanthus', sh:3,d:[.06,.18,.10],l:[.16,.40,.18],fc:[.36,.46,.95],win:[185,216,256],h:[1.0,1.5],w:[.05,.08],bnd:.06,cnt:[1,2],spr:.10,fa:1.0,wk:60,sl:250,ev:0,au:[.50,.45,.30],wt:1}),
+ // — cottage border —
+ P({n:'nepeta',     sh:4,d:[.12,.18,.11],l:[.32,.42,.27],fc:[.56,.50,.92],win:[130,178,256],h:[.50,.78],w:[.07,.12],bnd:.7,cnt:[6,10],spr:.30,fa:.7,wk:60,sl:288,ev:0,au:[.50,.45,.30],wt:5}),
+ P({n:'allium',     sh:3,d:[.06,.16,.10],l:[.18,.40,.16],fc:[.60,.34,.90],win:[120,150,186],h:[.90,1.4],w:[.04,.07],bnd:.06,cnt:[1,2],spr:.12,fa:1.0,wk:52,sl:226,ev:0,au:[.70,.60,.35],wt:3}),
+ P({n:'geranium',   sh:4,d:[.07,.18,.08],l:[.22,.44,.20],fc:[.62,.40,.86],win:[140,180,242],h:[.50,.80],w:[.08,.14],bnd:.7,cnt:[5,9],spr:.30,fa:.7,wk:62,sl:286,ev:0,au:[.70,.35,.20],wt:5}),
+ P({n:'hydrangea',  sh:5,d:[.06,.18,.10],l:[.16,.36,.20],fc:[.50,.55,.85],win:[182,224,292],h:[1.0,1.6],w:[.45,.70],bnd:.2,cnt:[5,9],spr:.50,fa:.7,wk:60,sl:300,ev:0,au:[.50,.32,.40],wt:3}),
+ P({n:'lobelia',    sh:4,d:[.06,.16,.08],l:[.18,.40,.18],fc:[.22,.32,.96],win:[150,200,272],h:[.30,.46],w:[.06,.11],bnd:.5,cnt:[5,9],spr:.26,fa:.85,wk:95,sl:300,ev:0,au:[.40,.40,.40],wt:3}),
+ // — bulbs (early pulses) —
+ P({n:'snowdrop',   sh:0,d:[.10,.20,.12],l:[.30,.50,.28],fc:[.97,.98,.97],win:[8,28,58],   h:[.22,.34],w:[.03,.05],bnd:.3,cnt:[4,7],spr:.18,fa:.9,wk:5, sl:66, ev:0,au:[.5,.5,.4],wt:2}),
+ P({n:'crocus',     sh:4,d:[.10,.20,.10],l:[.30,.46,.24],fc:[.70,.50,.92],win:[34,54,86],  h:[.18,.28],w:[.05,.09],bnd:.2,cnt:[5,9],spr:.20,fa:.95,wk:24,sl:94, ev:0,au:[.5,.5,.4],wt:2}),
+ P({n:'daffodil',   sh:2,d:[.10,.20,.10],l:[.28,.46,.22],fc:[1.0,.85,.18],win:[52,78,110], h:[.40,.60],w:[.05,.09],bnd:.2,cnt:[2,4],spr:.16,fa:.95,wk:38,sl:128,ev:0,au:[.6,.55,.3],wt:2}),
+ // — grass (now rare) —
+ P({n:'grass',      sh:0,d:[.08,.18,.07],l:[.24,.46,.18],fc:[.80,.75,.50],win:[210,240,290],h:[.50,1.0],w:[.04,.07],bnd:.4,cnt:[6,10],spr:.18,fa:.2,wk:60,sl:300,ev:0,au:[.70,.60,.35],wt:1}),
+];
+const S=[]; const FSTR=29;
+function fpush(x,z,w,h,bend,shade,flower,deep,lit,fc,win,shape,wk,sl,ev,au){
+  S.push(x,0,z,w,h,bend,R(),0,shade,flower, deep[0],deep[1],deep[2], lit[0],lit[1],lit[2],
+    fc[0],fc[1],fc[2], win[0],win[1],win[2], shape, wk,sl,ev, au[0],au[1],au[2]);}
+
+// ── FLOWER FORM per species → florets (clusters of flower dabs) ─────
+const FORMS={hellebore:'head',brunnera:'haze',pulmonaria:'head',epimedium:'haze',heuchera:'spike',
+  bergenia:'head',fern:'none',solomons:'bell',ajuga:'spike',foxglove:'spike',verbascum:'spike',
+  veronicast:'spike',ammi:'umbel',agapanthus:'globe',nepeta:'haze',allium:'globe',geranium:'head',
+  hydrangea:'mophead',lobelia:'haze',snowdrop:'single',crocus:'single',daffodil:'single',grass:'plume'};
+const FL=[]; const FLSTR=11;                            // x,y,z,size, r,g,b, ws,wp,we, seed
+function fl(x,y,z,size,fc,win){ FL.push(x,y,z,size, fc[0],fc[1],fc[2], win[0],win[1],win[2], R()); }
+function emitFlorets(cx,cz,sp){
+  const form=FORMS[sp.n]; if(!form||form==='none'||sp.fa<=0) return;
+  const H=sp.h[1], fc=sp.fc, win=sp.win;
+  if(form==='spike'){ const n=20+(R()*16|0); for(let i=0;i<n;i++){const t=0.42+0.58*i/n,a=i*2.4+R()*6.28,r=0.03+0.025*R();
+    fl(cx+Math.cos(a)*r, H*t, cz+Math.sin(a)*r, 0.06+0.035*R(), fc,win);} }
+  else if(form==='globe'){ const n=40+(R()*28|0),rad=0.11+0.06*R(); for(let i=0;i<n;i++){
+    let dx=gauss(),dy=gauss(),dz=gauss(); const m=Math.hypot(dx,dy,dz)||1; dx/=m;dy/=m;dz/=m;
+    fl(cx+dx*rad, H+dy*rad, cz+dz*rad, 0.055+0.025*R(), fc,win);} }
+  else if(form==='umbel'){ const n=30+(R()*22|0),yy=H*0.96; for(let i=0;i<n;i++){const a=R()*6.28,r=R()*0.20;
+    fl(cx+Math.cos(a)*r, yy+gauss()*0.02, cz+Math.sin(a)*r, 0.04+0.025*R(), fc,win);} }
+  else if(form==='head'){ const n=5+(R()*7|0); for(let i=0;i<n;i++){const a=R()*6.28,r=R()*0.10;
+    fl(cx+Math.cos(a)*r, H*0.85+gauss()*0.06, cz+Math.sin(a)*r, 0.08+0.05*R(), fc,win);} }
+  else if(form==='mophead'){ const heads=3+(R()*3|0); for(let h=0;h<heads;h++){const hx=cx+gauss()*0.28,hz=cz+gauss()*0.22,hy=H*(0.6+0.3*R());
+    const n=24+(R()*18|0); for(let i=0;i<n;i++){let dx=gauss(),dy=gauss(),dz=gauss();const m=Math.hypot(dx,dy,dz)||1;
+      fl(hx+dx/m*0.16, hy+dy/m*0.14, hz+dz/m*0.16, 0.055+0.025*R(), fc,win);} } }
+  else if(form==='haze'){ const n=28+(R()*22|0); for(let i=0;i<n;i++){
+    fl(cx+gauss()*sp.w[1]*1.7, H*(0.45+0.55*R()), cz+gauss()*sp.w[1]*1.7, 0.035+0.025*R(), fc,win);} }
+  else if(form==='bell'){ const n=8+(R()*7|0); for(let i=0;i<n;i++){const t=i/n;
+    fl(cx+(t-0.5)*0.34, H*(0.55+0.4*(1.0-t))-0.04, cz+gauss()*0.05, 0.055+0.025*R(), fc,win);} }
+  else if(form==='single'){ const n=2+(R()*3|0); for(let i=0;i<n;i++){
+    fl(cx+gauss()*0.06, H*0.84, cz+gauss()*0.06, 0.10+0.05*R(), fc,win);} }
+  else if(form==='plume'){ const n=6+(R()*5|0); for(let i=0;i<n;i++){
+    fl(cx+gauss()*0.04, H*(0.86+0.14*R()), cz+gauss()*0.04, 0.06, fc,win);} }
+}
+function emitSpecies(cx,cz,sp){
+  const cnt=sp.cnt[0]+(R()*(sp.cnt[1]-sp.cnt[0]+1)|0);
+  for(let k=0;k<cnt;k++){
+    const dx=gauss()*sp.spr, dz=gauss()*sp.spr;
+    fpush(cx+dx,cz+dz, sp.w[0]+R()*(sp.w[1]-sp.w[0]), sp.h[0]+R()*(sp.h[1]-sp.h[0]),
+      (R()*2-1)*sp.bnd, 0.6+R()*0.5, 0.0, jit(sp.d,.012),jit(sp.l,.05), sp.fc,sp.win, sp.sh, sp.wk,sp.sl,sp.ev,sp.au);
+    emitFlorets(cx+dx,cz+dz,sp);                        // real flower form per plant
+  }
+  if(sp.sh===2||sp.sh===3||sp.sh===7){                 // basal leaves under tall accents
+    const bl=3+(R()*3|0);
+    for(let k=0;k<bl;k++){const dx=gauss()*0.14,dz=gauss()*0.14;
+      fpush(cx+dx,cz+dz,0.10+R()*0.08,0.26+R()*0.22,(R()*2-1)*0.7,0.6+R()*0.4,0.0,jit(sp.d,.012),jit(sp.l,.05),sp.fc,sp.win,1,sp.wk,sp.sl,sp.ev,sp.au);}
+  }
+}
+const TOTW=LIB.reduce((a,s)=>a+s.wt,0);
+function pickSpecies(){let r=R()*TOTW; for(const s of LIB){r-=s.wt; if(r<=0)return s;} return LIB[0];}
+const FMAX=36000*Q|0;
+// plant drifts INTO the side beds — one species per drift (gardener's repetition), packed full
+for(let b=0;b<380 && S.length/FSTR<FMAX;b++){
+  const z=THREE.MathUtils.lerp(4.2,-13.5,Math.pow(R(),0.5));
+  const side=R()<0.5?-1:1, be=bedEdgeJS(z);
+  const cx=side*(be+0.2+R()*4.8), rad=THREE.MathUtils.lerp(0.45,1.4,R());
+  const sp=pickSpecies(), drift=3+(R()*7|0);
+  for(let p=0;p<drift && S.length/FSTR<FMAX;p++){
+    const px=cx+gauss()*rad, pz=z+gauss()*rad;
+    if(inBed(px,pz)) emitSpecies(px,pz,sp);
+  }
+}
+// PATH-EDGE BORDER — flowers spilling along both sides of the path (cottage style).
+// keeps abundance in the central column → reads full even on a narrow phone screen.
+const FLOWERY=LIB.filter(s=>['nepeta','geranium','lobelia','allium','heuchera','brunnera','ajuga','pulmonaria','hellebore','crocus','daffodil'].includes(s.n));
+for(let i=0;i<200 && S.length/FSTR<FMAX;i++){
+  const z=THREE.MathUtils.lerp(4.5,-13.5,Math.pow(R(),0.55));
+  const side=R()<0.5?-1:1, pc=pathCJS(z), off=1.05+R()*1.6;
+  const cx=pc+side*off, sp=FLOWERY[(R()*FLOWERY.length)|0];
+  const drift=3+(R()*5|0), rad=0.3+R()*0.55;
+  for(let p=0;p<drift && S.length/FSTR<FMAX;p++){
+    const px=cx+gauss()*rad, pz=z+gauss()*rad, lpc=pathCJS(pz);
+    if(Math.abs(px-lpc)>0.92 && Math.abs(px)<bedEdgeJS(pz)+0.3 && pz<4.4 && !nearBath(px,pz)) emitSpecies(px,pz,sp);
+  }
+}
+// naturalised SPRING BULBS — drifts of daffodils & snowdrops sweeping through the lawn
+const SNOW=LIB.find(s=>s.n==='snowdrop'), DAFF=LIB.find(s=>s.n==='daffodil'), CROC=LIB.find(s=>s.n==='crocus');
+for(let b=0;b<90 && S.length/FSTR<FMAX;b++){
+  const z=THREE.MathUtils.lerp(4.0,-12,Math.pow(R(),0.55));
+  const x=(R()*2-1)*bedEdgeJS(z)*0.92;
+  const sp=R()<0.45?DAFF:(R()<0.7?SNOW:CROC);            // daffodils + snowdrops, some crocus
+  const drift=5+(R()*8|0), rad=0.35+R()*0.7;
+  for(let p=0;p<drift && S.length/FSTR<FMAX;p++){
+    const px=x+gauss()*rad, pz=z+gauss()*rad;
+    if(Math.abs(px-pathCJS(pz))>1.0 && Math.abs(px)<bedEdgeJS(pz)+4.0 && pz<4.2 && !nearBath(px,pz)) emitSpecies(px,pz,sp);
+  }
+}
+const FN=S.length/FSTR, farr=Float32Array.from(S);
+function fs(o,s){const a=new Float32Array(FN*s);for(let i=0;i<FN;i++)for(let j=0;j<s;j++)a[i*s+j]=farr[i*FSTR+o+j];return a;}
+const fQ=new THREE.PlaneGeometry(1,1); fQ.translate(0,0.5,0);
+const fgeo=new THREE.InstancedBufferGeometry();
+fgeo.index=fQ.index; fgeo.attributes.position=fQ.attributes.position; fgeo.attributes.uv=fQ.attributes.uv;
+fgeo.instanceCount=FN;
+// pack four scalar columns into one vec4 (GPU attribute-slot budget)
+function pack4(a,b,c,d){const arr=new Float32Array(FN*4);
+  for(let i=0;i<FN;i++){arr[i*4]=farr[i*FSTR+a];arr[i*4+1]=farr[i*FSTR+b];arr[i*4+2]=farr[i*FSTR+c];arr[i*4+3]=farr[i*FSTR+d];}return arr;}
+fgeo.setAttribute('iPos',new THREE.InstancedBufferAttribute(fs(0,3),3));
+fgeo.setAttribute('iScale',new THREE.InstancedBufferAttribute(fs(3,2),2));
+fgeo.setAttribute('iDeep',new THREE.InstancedBufferAttribute(fs(10,3),3));
+fgeo.setAttribute('iLit',new THREE.InstancedBufferAttribute(fs(13,3),3));
+fgeo.setAttribute('iFcol',new THREE.InstancedBufferAttribute(fs(16,3),3));
+fgeo.setAttribute('iWin',new THREE.InstancedBufferAttribute(fs(19,3),3));
+fgeo.setAttribute('iAut',new THREE.InstancedBufferAttribute(fs(26,3),3));
+fgeo.setAttribute('iA',new THREE.InstancedBufferAttribute(pack4(5,6,8,9),4));    // bend,seed,shade,flower
+fgeo.setAttribute('iB',new THREE.InstancedBufferAttribute(pack4(22,23,24,25),4)); // shape,wake,sleep,ever
+const floorMat=new THREE.ShaderMaterial({transparent:true,depthTest:true,depthWrite:false,side:THREE.DoubleSide,
+  uniforms:{day:{value:0},growth:{value:0},time:{value:0},camRight:{value:new THREE.Vector3()},
+            fogColor:{value:FOG.clone()},fogNear:{value:9.0},fogFar:{value:95.0},dap:{value:0.6}},
+  vertexShader:`attribute vec3 iPos,iDeep,iLit,iFcol,iWin,iAut; attribute vec2 iScale; attribute vec4 iA,iB;
+    uniform float day,time; uniform vec3 camRight;
+    varying vec2 vUv; varying float vFog,vShape,vShade,vSeed,vFlower,vE,vLife,vBrown,vFresh; varying vec3 vDeep,vLit,vFcol,vAut; varying vec2 vWXZ;
+${WIND}
+    float ws(float d,vec3 w){if(d<w.x||d>w.z)return 0.0;return smoothstep(w.x,w.y,d)*(1.0-smoothstep(w.y,w.z,d));}
+    void main(){
+      float iBend=iA.x, iSeed=iA.y, iShade=iA.z, iFlower=iA.w;
+      float iShape=iB.x, iWake=iB.y, iSleep=iB.z, iEver=iB.w;
+      vUv=uv; vShape=iShape; vShade=iShade; vSeed=iSeed; vFlower=iFlower; vDeep=iDeep; vLit=iLit; vFcol=iFcol; vAut=iAut;
+      vE=ws(day,iWin)*(0.5+0.5*iSeed);
+      // per-plant lifecycle: wake in its season, sleep/die-back (unless evergreen)
+      float wk=iWake-6.0+iSeed*22.0;                                 // staggered emergence per plant
+      float wake=smoothstep(wk,wk+30.0,day);
+      float sleepP=iEver>0.5?0.0:smoothstep(iSleep,iSleep+34.0,day);
+      float life=wake*(1.0-sleepP); vLife=life;
+      vBrown=iEver>0.5?0.0:smoothstep(iSleep-16.0,iSleep+24.0,day);   // autumn browning
+      vFresh=1.0-smoothstep(0.2,0.85,wake);                          // pale fresh growth as it emerges
+      float hgt=iScale.y*(0.04+0.96*life);                           // grow up from almost nothing
+      float w=iScale.x;
+      float bx=(uv.x-0.5)*w+iBend*uv.y*uv.y;
+      vec3 world=iPos+camRight*bx+vec3(0.0,1.0,0.0)*(uv.y*hgt)+windOffset(iPos,time,0.022)*(uv.y*uv.y); vWXZ=iPos.xz;
+      vec4 mv=viewMatrix*vec4(world,1.0); vFog=-mv.z; gl_Position=projectionMatrix*mv; }`,
+  fragmentShader:`precision highp float;
+    varying vec2 vUv; varying float vFog,vShape,vShade,vSeed,vFlower,vE,vLife,vBrown,vFresh; varying vec3 vDeep,vLit,vFcol,vAut; varying vec2 vWXZ;
+    uniform vec3 fogColor; uniform float fogNear,fogFar,time,dap;
+${NOISE}
+${DAPPLE}
+    void main(){ if(vLife<0.02) discard;                            // dormant / asleep
+      float y=clamp(vUv.y,0.0,1.0); int Sh=int(vShape+0.5); float hw;
+      if(Sh==1)hw=pow(sin(3.14159*y),0.55);                         // leaf
+      else if(Sh==2)hw=(1.0-smoothstep(0.3,1.0,y)*0.65)*0.55;       // spire
+      else if(Sh==3){float st=step(y,0.8)*0.13; float ba=sqrt(max(0.0,1.0-pow((y-0.85)/0.16,2.0)))*step(0.66,y); hw=max(st,ba);} // ball
+      else if(Sh==4)hw=pow(sin(3.14159*clamp(y*0.82+0.13,0.0,1.0)),0.5);   // bush
+      else if(Sh==5)hw=sqrt(max(0.0,1.0-y*y));                      // dome
+      else if(Sh==6){ float feather=0.5+0.5*sin(y*40.0+vSeed*12.0); hw=(0.06+0.34*(1.0-y))*feather; } // fern frond
+      else if(Sh==7){ float st=step(y,0.82)*0.05; float disc=smoothstep(0.80,0.85,y)*(1.0-smoothstep(0.93,0.99,y)); hw=max(st,disc*0.95); } // flat umbel
+      else hw=1.0-smoothstep(0.12,1.0,y);                            // blade
+      float ax=abs(vUv.x-0.5)*2.0; float soft=smoothstep(hw,max(0.0,hw-0.2),ax); if(soft<0.01||hw<0.006)discard;
+      vec3 green=mix(vDeep,vLit,smoothstep(0.0,1.0,y))*vShade;
+      green=mix(green, green*vec3(1.12,1.22,0.82), vFresh*0.6);      // fresh pale-green spring flush
+      green=mix(green,vAut,vBrown*0.85);                             // foliage browns in autumn
+      float dp=dapple(vWXZ,time); green*=mix(1.0-0.35*dap,1.0+0.5*dap,dp);
+      float tip=(Sh==3)?smoothstep(0.66,0.9,y):(Sh==7)?smoothstep(0.81,0.9,y):(Sh==2)?smoothstep(0.45,1.0,y):(Sh==6)?0.0:smoothstep(0.55,0.94,y);
+      vec3 col=green+vFcol*tip*vE*vFlower*3.4;                       // flower colour
+      col=mix(col,fogColor,smoothstep(fogNear,fogFar,vFog));
+      gl_FragColor=vec4(col,soft); }`});
+const floor=new THREE.Mesh(fgeo,floorMat); floor.frustumCulled=false; scene.add(floor);
+
+// ── FLORETS — real flower forms (spikes / globes / umbels / mopheads) ─
+const FLN=Math.min(FL.length/FLSTR,55000*Q|0), flarr=Float32Array.from(FL);
+function fls(o,s){const a=new Float32Array(FLN*s);for(let i=0;i<FLN;i++)for(let j=0;j<s;j++)a[i*s+j]=flarr[i*FLSTR+o+j];return a;}
+const florQ=new THREE.PlaneGeometry(1,1);
+const flgeo=new THREE.InstancedBufferGeometry();
+flgeo.index=florQ.index; flgeo.attributes.position=florQ.attributes.position; flgeo.attributes.uv=florQ.attributes.uv;
+flgeo.instanceCount=FLN;
+flgeo.setAttribute('iC',new THREE.InstancedBufferAttribute(fls(0,3),3));
+flgeo.setAttribute('iSize',new THREE.InstancedBufferAttribute(fls(3,1),1));
+flgeo.setAttribute('iCol',new THREE.InstancedBufferAttribute(fls(4,3),3));
+flgeo.setAttribute('iWin',new THREE.InstancedBufferAttribute(fls(7,3),3));
+flgeo.setAttribute('iSeed',new THREE.InstancedBufferAttribute(fls(10,1),1));
+const florMat=new THREE.ShaderMaterial({transparent:true,depthTest:true,depthWrite:false,side:THREE.DoubleSide,
+  uniforms:{day:{value:0},time:{value:0},camRight:{value:new THREE.Vector3()},camUp:{value:new THREE.Vector3()},
+            fogColor:{value:FOG.clone()},fogNear:{value:9.0},fogFar:{value:95.0}},
+  vertexShader:`attribute vec3 iC,iCol,iWin; attribute float iSize,iSeed;
+    uniform float day,time; uniform vec3 camRight,camUp;
+    varying vec2 vUv; varying vec3 vCol; varying float vA,vFog,vSd;
+${WIND}
+    float ws(float d,vec3 w){if(d<w.x||d>w.z)return 0.0;return smoothstep(w.x,w.y,d)*(1.0-smoothstep(w.y,w.z,d));}
+    void main(){ vUv=uv; vCol=iCol; vSd=iSeed;
+      vec3 w2=vec3(iWin.x+iSeed*12.0-6.0, iWin.y, iWin.z);          // each floret opens at its own time
+      float e=ws(day,w2)*(0.65+0.35*iSeed); vA=e;
+      if(e<0.01){ gl_Position=vec4(2.0,2.0,2.0,1.0); return; }      // cull out of season
+      float sc=iSize*(0.18+0.82*e);                                 // swell from a bud
+      vec2 q=uv-0.5;
+      vec3 world=iC + windOffset(iC,time,0.022) + camRight*(q.x*sc) + camUp*(q.y*sc);
+      vec4 mv=viewMatrix*vec4(world,1.0); vFog=-mv.z; gl_Position=projectionMatrix*mv; }`,
+  fragmentShader:`precision highp float; varying vec2 vUv; varying vec3 vCol; varying float vA,vFog,vSd;
+    uniform vec3 fogColor; uniform float fogNear,fogFar;
+    void main(){ vec2 d=vUv-0.5; float ang=atan(d.y,d.x), r=length(d);
+      float petal=0.5*(0.55+0.45*abs(cos(2.5*ang+vSd*30.0)));        // 5-petal flower silhouette
+      if(r>petal)discard;
+      float a=smoothstep(petal,petal-0.16,r)*vA; if(a<0.03)discard;
+      vec3 c=mix(vCol, vec3(1.0,0.95,0.6), smoothstep(0.15,0.0,r)*0.7); // warm flower centre
+      c=mix(c,fogColor,smoothstep(fogNear,fogFar,vFog));
+      gl_FragColor=vec4(c,a); }`});
+const florets=new THREE.Mesh(flgeo,florMat); florets.frustumCulled=false; scene.add(florets);
+
+// ── APPLES — fruit ripening green→red through late summer, dropping in autumn ─
+const FRN=FR2.length/6, frarr=Float32Array.from(FR2);
+const fruitGeo=new THREE.InstancedBufferGeometry();
+const frQ=new THREE.PlaneGeometry(1,1);
+fruitGeo.index=frQ.index; fruitGeo.attributes.position=frQ.attributes.position; fruitGeo.attributes.uv=frQ.attributes.uv;
+fruitGeo.instanceCount=FRN;
+function frs(o,s){const a=new Float32Array(FRN*s);for(let i=0;i<FRN;i++)for(let j=0;j<s;j++)a[i*s+j]=frarr[i*6+o+j];return a;}
+fruitGeo.setAttribute('iC',new THREE.InstancedBufferAttribute(frs(0,3),3));
+fruitGeo.setAttribute('iSize',new THREE.InstancedBufferAttribute(frs(3,1),1));
+fruitGeo.setAttribute('iSeed',new THREE.InstancedBufferAttribute(frs(4,1),1));
+fruitGeo.setAttribute('iGround',new THREE.InstancedBufferAttribute(frs(5,1),1));
+const fruitMat=new THREE.ShaderMaterial({transparent:true,depthTest:true,depthWrite:true,alphaTest:0.5,side:THREE.DoubleSide,
+  uniforms:{day:{value:0},camRight:{value:new THREE.Vector3()},camUp:{value:new THREE.Vector3()},
+            fogColor:{value:FOG.clone()},fogNear:{value:9.0},fogFar:{value:95.0}},
+  vertexShader:`attribute vec3 iC; attribute float iSize,iSeed,iGround; uniform float day; uniform vec3 camRight,camUp;
+    varying vec2 vUv; varying float vFog,vSeed,vRipe;
+    float sm(float a,float b,float x){x=clamp((x-a)/(b-a),0.0,1.0);return x*x*(3.0-2.0*x);}
+    void main(){ vUv=uv; vSeed=iSeed;
+      float pres, sc; vec2 q=uv-0.5; vec3 world;
+      if(iGround<0.5){                                                // on the tree
+        float grow=sm(196.0,228.0,day), drop=sm(298.0+iSeed*24.0,330.0+iSeed*16.0,day);
+        pres=grow*(1.0-drop); vRipe=sm(210.0,272.0,day); sc=iSize*(0.45+0.55*grow);
+        world=iC+camRight*(q.x*sc)+camUp*((q.y-0.4)*sc);             // hang below the twig
+      } else {                                                       // windfall on the grass
+        pres=sm(300.0,322.0,day)*(1.0-sm(356.0,366.0,day)); vRipe=1.0; sc=iSize;
+        world=iC+camRight*(q.x*sc)+camUp*(q.y*sc*0.7);               // lying on the ground
+      }
+      if(pres<0.02){ gl_Position=vec4(2.0,2.0,2.0,1.0); return; }
+      vec4 mv=viewMatrix*vec4(world,1.0); vFog=-mv.z; gl_Position=projectionMatrix*mv; }`,
+  fragmentShader:`precision highp float; varying vec2 vUv; varying float vFog,vSeed,vRipe;
+    uniform vec3 fogColor; uniform float fogNear,fogFar;
+    void main(){ vec2 q=vUv-0.5; float r=length(q); if(r>0.5) discard;
+      vec3 green=vec3(0.40,0.50,0.16), red=mix(vec3(0.82,0.16,0.10),vec3(0.90,0.52,0.12),vSeed);
+      vec3 c=mix(green,red, vRipe*(0.55+0.45*vSeed));
+      c+=vec3(1.0)*smoothstep(0.28,0.0,length(q-vec2(-0.13,0.14)))*0.45;  // glossy highlight
+      c=mix(c,fogColor,smoothstep(fogNear,fogFar,vFog));
+      gl_FragColor=vec4(c,1.0); }`});
+const fruit=new THREE.Mesh(fruitGeo,fruitMat); fruit.frustumCulled=false; scene.add(fruit);
+
+// ── LAWN GRASS — short blades carpeting the mown lawn, wind-swayed ───
+const GB=[];
+for(let i=0;i<14000*Q && GB.length<24000;i++){
+  const z=THREE.MathUtils.lerp(5.0,-13,Math.pow(R(),0.5));
+  const be=bedEdgeJS(z), pc=pathCJS(z), x=(R()*2-1)*be;
+  if(Math.abs(x)<be-0.05 && Math.abs(x-pc)>0.95 && z<4.3 && !nearBath(x,z)) // lawn only, clear of bath
+    GB.push(x,z, 0.05+R()*0.13, R(), 0.6+R()*0.45, (R()*2-1)*0.35);  // x,z,h,seed,shade,lean
+}
+const GN=GB.length/6, garr=Float32Array.from(GB);
+function gss(o,s){const a=new Float32Array(GN*s);for(let i=0;i<GN;i++)for(let j=0;j<s;j++)a[i*s+j]=garr[i*6+o+j];return a;}
+const gQ=new THREE.PlaneGeometry(1,1); gQ.translate(0,0.5,0);
+const ggeo=new THREE.InstancedBufferGeometry();
+ggeo.index=gQ.index; ggeo.attributes.position=gQ.attributes.position; ggeo.attributes.uv=gQ.attributes.uv;
+ggeo.instanceCount=GN;
+ggeo.setAttribute('iXZ',new THREE.InstancedBufferAttribute(gss(0,2),2));
+ggeo.setAttribute('iH',new THREE.InstancedBufferAttribute(gss(2,1),1));
+ggeo.setAttribute('iSeed',new THREE.InstancedBufferAttribute(gss(3,1),1));
+ggeo.setAttribute('iShade',new THREE.InstancedBufferAttribute(gss(4,1),1));
+ggeo.setAttribute('iLean',new THREE.InstancedBufferAttribute(gss(5,1),1));
+const grassMat=new THREE.ShaderMaterial({side:THREE.DoubleSide,
+  uniforms:{time:{value:0},camRight:{value:new THREE.Vector3()},
+            fogColor:{value:FOG.clone()},fogNear:{value:9.0},fogFar:{value:95.0}},
+  vertexShader:`attribute vec2 iXZ; attribute float iH,iSeed,iShade,iLean; uniform float time; uniform vec3 camRight;
+    varying float vY,vFog,vShade,vSeed;
+${WIND}
+    void main(){ vY=uv.y; vShade=iShade; vSeed=iSeed;
+      vec3 base=vec3(iXZ.x,0.0,iXZ.y);
+      float wdt=0.018*(1.0-uv.y*0.85);                                // taper to a point
+      float bx=(uv.x-0.5)*wdt + iLean*uv.y*uv.y;
+      vec3 world=base+camRight*bx+vec3(0.0,1.0,0.0)*(uv.y*iH)+windOffset(base,time,0.022)*(uv.y*uv.y);
+      vec4 mv=viewMatrix*vec4(world,1.0); vFog=-mv.z; gl_Position=projectionMatrix*mv; }`,
+  fragmentShader:`precision highp float; varying float vY,vFog,vShade,vSeed; uniform vec3 fogColor; uniform float fogNear,fogFar;
+    void main(){ vec3 deep=vec3(0.10,0.22,0.07), lit=vec3(0.30,0.52,0.18);
+      vec3 c=mix(deep,lit,vY)*vShade*(0.85+0.3*vSeed);
+      c=mix(c,fogColor,smoothstep(fogNear,fogFar,vFog)); gl_FragColor=vec4(c,1.0); }`});
+const grass=new THREE.Mesh(ggeo,grassMat); grass.frustumCulled=false; scene.add(grass);
+
+// ── BIRDS — a drifting flock + one visiting the bird bath ───────────
+const NBIRD=13;
+const birdSeed=new Float32Array(NBIRD), birdSpeed=new Float32Array(NBIRD), birdLow=new Float32Array(NBIRD);
+for(let i=0;i<NBIRD;i++){ birdSeed[i]=R(); birdSpeed[i]=0.5+R()*0.4; birdLow[i]=i<2?1:0; } // 2 bath birds
+const birdGeo=new THREE.InstancedBufferGeometry();
+const bq=new THREE.PlaneGeometry(1,1);
+birdGeo.index=bq.index; birdGeo.attributes.position=bq.attributes.position; birdGeo.attributes.uv=bq.attributes.uv;
+birdGeo.instanceCount=NBIRD;
+birdGeo.setAttribute('iSeed',new THREE.InstancedBufferAttribute(birdSeed,1));
+birdGeo.setAttribute('iSpeed',new THREE.InstancedBufferAttribute(birdSpeed,1));
+birdGeo.setAttribute('iLow',new THREE.InstancedBufferAttribute(birdLow,1));
+const birdMat=new THREE.ShaderMaterial({transparent:true,depthTest:true,depthWrite:false,side:THREE.DoubleSide,
+  uniforms:{time:{value:0},camRight:{value:new THREE.Vector3()},camUp:{value:new THREE.Vector3()},
+            uBath:{value:new THREE.Vector3(BATH[0],0,BATH[1])},fogColor:{value:FOG.clone()},fogNear:{value:9.0},fogFar:{value:95.0}},
+  vertexShader:`attribute float iSeed,iSpeed,iLow; uniform float time; uniform vec3 camRight,camUp,uBath;
+    varying vec2 vUv; varying float vFog,vT;
+    void main(){ vUv=uv; vT=time*9.0+iSeed*30.0; vec3 c;
+      if(iLow<0.5){                                                   // sky flock drifting across
+        float t=time*iSpeed+iSeed*40.0;
+        float x=mod(iSeed*47.0+t*2.2, 70.0)-35.0;
+        c=vec3(x, 9.0+iSeed*5.0+sin(t*0.6+iSeed*6.0)*0.8, -16.0-iSeed*22.0);
+      } else {                                                         // bath bird: perches, takes brief flights
+        float ph=fract(time*0.045+iSeed*0.5);
+        float fly=smoothstep(0.55,0.65,ph)*(1.0-smoothstep(0.8,0.9,ph));
+        vec3 rim=uBath+vec3(cos(time*0.6+iSeed*6.28)*0.36,1.30,sin(time*0.6+iSeed*6.28)*0.36);
+        vec3 air=uBath+vec3(sin(time*1.6)*1.0,2.6,0.6);
+        c=mix(rim,air,fly);
+      }
+      float sz=iLow>0.5?0.26:0.5;
+      vec2 q=uv-0.5;
+      vec3 world=c+camRight*(q.x*sz)+camUp*(q.y*sz);
+      vec4 mv=viewMatrix*vec4(world,1.0); vFog=-mv.z; gl_Position=projectionMatrix*mv; }`,
+  fragmentShader:`precision highp float; varying vec2 vUv; varying float vFog,vT;
+    uniform vec3 fogColor; uniform float fogNear,fogFar;
+    void main(){ vec2 q=vUv-0.5;
+      float flap=0.12+0.20*abs(sin(vT));                              // wings beating
+      float w=abs(q.y-(flap-abs(q.x)*0.7));                            // shallow V (a bird)
+      float a=smoothstep(0.05,0.0,w)*step(abs(q.x),0.46)*step(q.y,flap+0.06);
+      if(a<0.4) discard;
+      gl_FragColor=vec4(mix(vec3(0.12,0.10,0.10),fogColor,smoothstep(fogNear,fogFar,vFog)),1.0); }`});
+const birds=new THREE.Mesh(birdGeo,birdMat); birds.frustumCulled=false; scene.add(birds);
+
+// ── PATIO STRING LIGHTS — warm bulbs strung over the patio, on at dusk ─
+const NL2=18;
+const lpos=new Float32Array(NL2*3), lsd=new Float32Array(NL2);
+for(let i=0;i<NL2;i++){ const t=i/(NL2-1);
+  lpos[i*3]=THREE.MathUtils.lerp(-3.0,3.0,t); lpos[i*3+1]=2.6-0.55*Math.sin(t*Math.PI); lpos[i*3+2]=4.2; lsd[i]=R(); }
+const lgeo2=new THREE.BufferGeometry();
+lgeo2.setAttribute('position',new THREE.BufferAttribute(lpos,3)); lgeo2.setAttribute('sd',new THREE.BufferAttribute(lsd,1));
+const lightMat=new THREE.ShaderMaterial({transparent:true,depthTest:true,depthWrite:false,blending:THREE.AdditiveBlending,
+  uniforms:{sun:{value:1},time:{value:0},dpr:{value:renderer.getPixelRatio()}},
+  vertexShader:`attribute float sd; uniform float sun,time,dpr; varying float vG,vS;
+    void main(){ vS=sd; vG=1.0-smoothstep(0.42,0.82,sun);            // come on as the light fades
+      vec4 mv=viewMatrix*vec4(position,1.0);
+      gl_Position=projectionMatrix*mv; gl_PointSize=(7.0+12.0*vG)*dpr*(8.0/max(0.5,-mv.z)); }`,
+  fragmentShader:`precision highp float; varying float vG,vS; uniform float time;
+    void main(){ vec2 d=gl_PointCoord-0.5; float r=length(d); if(r>0.5) discard;
+      float core=exp(-r*r*18.0), halo=exp(-r*r*4.0);
+      float tw=0.85+0.15*sin(time*3.0+vS*30.0);                       // gentle twinkle
+      float a=(core+halo*0.5)*vG*tw;
+      vec3 c=vec3(1.0,0.74,0.40)*(1.6+2.0*vG);                        // warm bulb
+      gl_FragColor=vec4(c*a,a); }`});
+const patioLights=new THREE.Points(lgeo2,lightMat); patioLights.frustumCulled=false; scene.add(patioLights);
+
+// ── POLLINATORS + petals ────────────────────────────────────────────
+function points(n,opts){
+  const p=new Float32Array(n*3), sd=new Float32Array(n);
+  for(let i=0;i<n;i++){p[i*3]=(R()*2-1)*opts.xr; p[i*3+1]=0; p[i*3+2]=THREE.MathUtils.lerp(opts.zn,opts.zf,R()); sd[i]=R();}
+  const g=new THREE.BufferGeometry(); g.setAttribute('position',new THREE.BufferAttribute(p,3)); g.setAttribute('sd',new THREE.BufferAttribute(sd,1));
+  const m=new THREE.ShaderMaterial({transparent:true,depthTest:true,depthWrite:false,blending:opts.add?THREE.AdditiveBlending:THREE.NormalBlending,
+    uniforms:{time:{value:0},amt:{value:0},dpr:{value:renderer.getPixelRatio()},topY:{value:opts.topY||0},
+      cA:{value:new THREE.Color(...opts.cA)},cB:{value:new THREE.Color(...opts.cB)},mode:{value:opts.mode},
+      fogColor:{value:FOG.clone()},fogNear:{value:9.0},fogFar:{value:95.0}},
+    vertexShader:`attribute float sd; uniform float time,amt,dpr,topY,mode; varying float vA,vFog,vS;
+      void main(){ vS=sd; vec3 p=position;
+        if(mode<0.5){ float t=fract(sd+time*0.05*(0.6+sd)); p.y=topY*t; p.x+=sin(time*0.8+sd*28.0)*1.1*(0.3+t); }
+        else { p.x+=sin(time*1.6+sd*40.0)*0.7+sin(time*0.7+sd*1.7)*0.4; p.z+=cos(time*1.3+sd*1.2)*0.6;
+               p.y=0.4+abs(sin(time*3.0+sd*40.0))*0.6+0.2*sin(time*0.5+sd); }
+        vA=amt*(0.6+0.4*sin(time*1.3+sd*10.0)); vec4 mv=viewMatrix*vec4(p,1.0); vFog=-mv.z;
+        gl_Position=projectionMatrix*mv; gl_PointSize=opts_sz*dpr*(8.0/max(0.5,-mv.z)); }`.replace('opts_sz',(opts.sz||7).toFixed(1)),
+    fragmentShader:`precision highp float; varying float vA,vFog,vS; uniform vec3 cA,cB,fogColor; uniform float fogNear,fogFar;
+      void main(){ vec2 d=gl_PointCoord-0.5; if(length(d)>0.5)discard; float a=smoothstep(0.5,0.15,length(d))*vA; if(a<0.03)discard;
+        vec3 c=mix(cA,cB,vS); c=mix(c,fogColor,smoothstep(fogNear,fogFar,vFog)*0.6); gl_FragColor=vec4(c,a);}`});
+  const pts=new THREE.Points(g,m); pts.frustumCulled=false; scene.add(pts); return m;
+}
+const blossomFall=points(240,{xr:14,zn:4,zf:-26,topY:6.5,mode:0,cA:[1,0.93,0.96],cB:[1,0.82,0.88],sz:7});
+const leafFall   =points(340,{xr:16,zn:4,zf:-28,topY:8.0,mode:0,cA:[0.9,0.5,0.12],cB:[0.7,0.22,0.08],sz:7});
+
+// ── VARIED FLIES — bumblebee / honeybee / hoverfly / butterflies ────
+// per-kind: size, two colours (banded), speed, bob, wander, motion mode, weight
+const FLYKINDS=[
+  {sz:13,cA:[0.95,0.78,0.18],cB:[0.12,0.10,0.07],sp:0.8,bob:2.0,wan:0.5,mode:0,w:0.20}, // bumblebee
+  {sz:6, cA:[1.0,0.82,0.30], cB:[0.55,0.40,0.12],sp:1.7,bob:3.2,wan:0.7,mode:0,w:0.30}, // honeybee
+  {sz:4, cA:[0.82,0.86,0.5], cB:[0.5,0.6,0.45], sp:2.6,bob:1.2,wan:0.35,mode:1,w:0.22}, // hoverfly (darty)
+  {sz:16,cA:[1.0,0.45,0.7],  cB:[0.55,0.65,1.0], sp:0.6,bob:1.4,wan:0.9,mode:2,w:0.16}, // pink/blue butterfly
+  {sz:15,cA:[1.0,0.72,0.18], cB:[0.95,0.38,0.12],sp:0.6,bob:1.5,wan:0.95,mode:2,w:0.12}, // orange butterfly
+];
+function pickFly(){let r=R(),a=0; for(const k of FLYKINDS){a+=k.w; if(r<=a)return k;} return FLYKINDS[1];}
+const NF=240*Q|0;
+const fp=new Float32Array(NF*3),fSd=new Float32Array(NF),fSz=new Float32Array(NF),fSp=new Float32Array(NF),
+      fBob=new Float32Array(NF),fWan=new Float32Array(NF),fMode=new Float32Array(NF),fCA=new Float32Array(NF*3),fCB=new Float32Array(NF*3);
+for(let i=0;i<NF;i++){
+  const z=THREE.MathUtils.lerp(5,-13,R()), side=R()<0.5?-1:1, k=pickFly();
+  fp[i*3]=side*(bedEdgeJS(z)+R()*3); fp[i*3+1]=0; fp[i*3+2]=z;
+  fSd[i]=R(); fSz[i]=k.sz; fSp[i]=k.sp; fBob[i]=k.bob; fWan[i]=k.wan; fMode[i]=k.mode;
+  fCA[i*3]=k.cA[0];fCA[i*3+1]=k.cA[1];fCA[i*3+2]=k.cA[2]; fCB[i*3]=k.cB[0];fCB[i*3+1]=k.cB[1];fCB[i*3+2]=k.cB[2];
+}
+const flg=new THREE.BufferGeometry();
+flg.setAttribute('position',new THREE.BufferAttribute(fp,3)); flg.setAttribute('sd',new THREE.BufferAttribute(fSd,1));
+flg.setAttribute('fsz',new THREE.BufferAttribute(fSz,1)); flg.setAttribute('fsp',new THREE.BufferAttribute(fSp,1));
+flg.setAttribute('fbob',new THREE.BufferAttribute(fBob,1)); flg.setAttribute('fwan',new THREE.BufferAttribute(fWan,1));
+flg.setAttribute('fmode',new THREE.BufferAttribute(fMode,1));
+flg.setAttribute('cA',new THREE.BufferAttribute(fCA,3)); flg.setAttribute('cB',new THREE.BufferAttribute(fCB,3));
+const fliesMat=new THREE.ShaderMaterial({transparent:true,depthTest:true,depthWrite:false,
+  uniforms:{time:{value:0},amt:{value:0},dpr:{value:renderer.getPixelRatio()},fogColor:{value:FOG.clone()},fogNear:{value:9.0},fogFar:{value:95.0}},
+  vertexShader:`attribute float sd,fsz,fsp,fbob,fwan,fmode; attribute vec3 cA,cB;
+    uniform float time,amt,dpr; varying vec3 vcA,vcB; varying float vA,vFog;
+    void main(){ vec3 p=position; float s=sd*40.0, T=time*fsp;
+      if(fmode<0.5){                                   // bee buzz around a flower
+        p.x+=sin(T+s)*fwan+sin(T*0.5+s*1.7)*fwan*0.6; p.z+=cos(T*0.8+s)*fwan*0.7;
+        p.y=0.55+abs(sin(T*fbob+s))*0.55;
+      } else if(fmode<1.5){                            // hoverfly: hover + flick
+        p.x+=sin(time*9.0+s)*0.05+sin(T*0.3+s)*fwan; p.z+=cos(time*8.0+s)*0.05;
+        p.y=0.7+sin(time*2.0+s)*0.12;
+      } else {                                          // butterfly: slow flapping wander
+        p.x+=sin(T+s)*fwan*1.5; p.z+=cos(T*0.6+s)*fwan; p.y=0.55+abs(sin(time*1.4+s))*0.95;
+      }
+      vcA=cA; vcB=cB; vA=amt*(0.7+0.3*sin(time*1.3+s));
+      vec4 mv=viewMatrix*vec4(p,1.0); vFog=-mv.z;
+      gl_Position=projectionMatrix*mv; gl_PointSize=fsz*dpr*(8.0/max(0.5,-mv.z)); }`,
+  fragmentShader:`precision highp float; varying vec3 vcA,vcB; varying float vA,vFog;
+    uniform vec3 fogColor; uniform float fogNear,fogFar;
+    void main(){ vec2 d=gl_PointCoord-0.5; if(length(d)>0.5)discard;
+      float a=smoothstep(0.5,0.22,length(d))*vA; if(a<0.03)discard;
+      vec3 c=mix(vcA,vcB, step(0.5,fract(gl_PointCoord.y*3.0)));   // banded body/wings
+      c=mix(c,fogColor,smoothstep(fogNear,fogFar,vFog)*0.6);
+      gl_FragColor=vec4(c,a); }`});
+const flies=new THREE.Points(flg,fliesMat); flies.frustumCulled=false; scene.add(flies);
+
+// ── POST (soft daylight) ────────────────────────────────────────────
+const postU={src:{value:null},res:{value:new THREE.Vector2(innerWidth,innerHeight)},bloom:{value:0.32},sun:{value:1.0}};
+const presentMat=new THREE.ShaderMaterial({uniforms:postU,
+  vertexShader:`varying vec2 vUv; void main(){vUv=uv; gl_Position=vec4(position,1.);}`,
+  fragmentShader:`precision highp float; varying vec2 vUv; uniform sampler2D src; uniform vec2 res; uniform float bloom,sun;
+    vec3 aces(vec3 x){return clamp((x*(2.51*x+0.03))/(x*(2.43*x+0.59)+0.14),0.,1.);}
+    void main(){ vec3 base=texture2D(src,vUv).rgb; vec3 b=vec3(0.); float tot=0.;
+      for(int i=1;i<=6;i++){float fr=float(i); float rad=fr/res.y; float w=1.0/(fr*fr);
+        for(int k=0;k<6;k++){float a=float(k)/6.*6.2831; b+=texture2D(src,vUv+vec2(cos(a),sin(a))*rad).rgb*w; tot+=w;}}
+      b/=tot; b=max(b-0.62,0.0);
+      vec3 col=base+b*bloom*(1.0+(1.0-sun)*1.6);                     // lights bloom more at dusk
+      // day → golden dusk → cool evening (never full dark, twilight glow)
+      vec3 dayT=vec3(1.0), duskT=vec3(1.22,0.84,0.55), eveT=vec3(0.60,0.68,0.92);
+      vec3 tint = sun>0.5 ? mix(duskT,dayT,(sun-0.5)*2.0) : mix(eveT,duskT,sun*2.0);
+      float bright=mix(0.5,1.0,smoothstep(0.0,0.85,sun));
+      col*=tint*bright;
+      col=aces(col*1.05); col=pow(col,vec3(0.94));
+      float v=1.0-(1.0-sun)*0.28*smoothstep(0.1,1.2,length(vUv-vec2(0.5,0.62))); // soft evening vignette
+      gl_FragColor=vec4(col*v,1.0); }`});
+
+// ── season + events + loop ──────────────────────────────────────────
+const SEASONS=[{n:'winter',t:0},{n:'spring',t:80},{n:'summer',t:172},{n:'autumn',t:264},{n:'winter',t:340}];
+function seasonName(d){for(let i=0;i<4;i++)if(d>=SEASONS[i].t&&d<SEASONS[i+1].t)return SEASONS[i].n;return'winter';}
+function smooth(a,b,x){x=Math.min(1,Math.max(0,(x-a)/(b-a)));return x*x*(3-2*x);}
+function growthOf(d){return smooth(40,150,d)*(1-smooth(250,345,d));}
+const EVENTS=[[40,'bare branches'],[78,'blossom breaks'],[110,'leaf-out · woodland floor wakes'],
+  [150,'in full leaf'],[185,'high summer · the garden hums'],[250,'first turn'],[285,'maples blaze'],
+  [305,'leaf fall'],[338,'bare again']];
+function currentEvent(d){let e='';for(const[t,n]of EVENTS){if(d>=t)e=n;}return e;}
+const _r=new THREE.Vector3(),_u=new THREE.Vector3();
+let last=null;
+function frame(t){
+  requestAnimationFrame(frame);
+  if(last===null)last=t; const dtr=Math.min((t-last)/1000,0.05); last=t;
+  if(!paused){ day+=speed*dtr; if(day>=YEAR){day-=YEAR; year++;} }
+  const g=growthOf(day), tm=t*0.001;
+  _r.setFromMatrixColumn(cam.matrixWorld,0); _u.setFromMatrixColumn(cam.matrixWorld,1);
+  leafMat.uniforms.camRight.value.copy(_r); leafMat.uniforms.camUp.value.copy(_u);
+  leafMat.uniforms.day.value=day; leafMat.uniforms.time.value=tm;
+  const rr=_r.clone(); rr.y=0; rr.normalize();
+  floorMat.uniforms.camRight.value.copy(rr); floorMat.uniforms.day.value=day;
+  floorMat.uniforms.growth.value=Math.max(0.12,g); floorMat.uniforms.time.value=tm;
+  florMat.uniforms.camRight.value.copy(_r); florMat.uniforms.camUp.value.copy(_u);
+  florMat.uniforms.day.value=day; florMat.uniforms.time.value=tm;
+  grassMat.uniforms.camRight.value.copy(rr); grassMat.uniforms.time.value=tm;
+  birdMat.uniforms.camRight.value.copy(_r); birdMat.uniforms.camUp.value.copy(_u); birdMat.uniforms.time.value=tm;
+  fruitMat.uniforms.camRight.value.copy(_r); fruitMat.uniforms.camUp.value.copy(_u); fruitMat.uniforms.day.value=day;
+  const sun=(window.__sun!=null)?window.__sun:0.5+0.5*Math.sin(tm*0.085); // slow day → dusk → evening drift
+  postU.sun.value=sun; lightMat.uniforms.sun.value=sun; lightMat.uniforms.time.value=tm;
+  water.material.uniforms.time.value=tm;
+  groundU.time.value=tm;
+  const leafOn=smooth(72,112,day)*(1-smooth(300,340,day));
+  groundU.dap.value=0.2+0.6*leafOn; floorMat.uniforms.dap.value=0.2+0.6*leafOn;
+  blossomFall.uniforms.time.value=tm; blossomFall.uniforms.amt.value=smooth(80,96,day)*(1-smooth(108,124,day));
+  leafFall.uniforms.time.value=tm; leafFall.uniforms.amt.value=smooth(292,315,day)*(1-smooth(336,358,day));
+  fliesMat.uniforms.time.value=tm; fliesMat.uniforms.amt.value=smooth(118,150,day)*(1-smooth(252,292,day));
+  renderer.setRenderTarget(sceneRT); renderer.render(scene,cam);
+  postU.src.value=sceneRT.texture; postQuad.material=presentMat;
+  renderer.setRenderTarget(null); renderer.render(post,postCam);
+  document.getElementById('day').textContent=Math.floor(day);
+  document.getElementById('year').textContent=year;
+  document.getElementById('season').textContent=seasonName(day);
+  document.getElementById('ev').textContent=currentEvent(day);
+}
+requestAnimationFrame(frame);
+window.__setDay=v=>{day=v;}; window.__pause=v=>{paused=v;};
+addEventListener('resize',()=>{ renderer.setSize(innerWidth,innerHeight);
+  layout();
+  postU.res.value.set(innerWidth,innerHeight);
+  sceneRT.setSize(innerWidth*renderer.getPixelRatio(),innerHeight*renderer.getPixelRatio()); });
+addEventListener('keydown',e=>{ if(e.code==='Space'){paused=!paused;e.preventDefault();}
+  if(e.code==='ArrowUp')speed=Math.min(speed*1.3,90); if(e.code==='ArrowDown')speed=Math.max(speed/1.3,1); });
+</script>
+</body>
+</html>

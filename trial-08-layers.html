@@ -1,0 +1,396 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>GardenOS — Trial 08 · Layers Through Time</title>
+<style>
+  html,body{margin:0;height:100%;background:#01030a;overflow:hidden;
+    font-family:-apple-system,Inter,system-ui,sans-serif;color:#eef0e8}
+  canvas{display:block}
+  #hud{position:fixed;left:20px;bottom:18px;z-index:10;font-size:12px;letter-spacing:.05em;
+    line-height:1.55;text-shadow:0 1px 12px #000;opacity:.85;pointer-events:none}
+  #season{font-size:11px;text-transform:uppercase;letter-spacing:.24em;opacity:.6}
+  #ev{font-size:11px;opacity:.7;margin-top:2px;min-height:14px;color:#cfe6c0}
+  #title{position:fixed;right:20px;top:18px;z-index:10;text-align:right;font-size:11px;
+    letter-spacing:.2em;text-transform:uppercase;opacity:.4;text-shadow:0 1px 12px #000}
+  #hint{position:fixed;left:20px;top:18px;z-index:10;font-size:11px;letter-spacing:.06em;
+    opacity:.32;text-shadow:0 1px 12px #000}
+</style>
+</head>
+<body>
+<div id="title">GardenOS · Trial 08<br><span style="opacity:.6">layers through time</span></div>
+<div id="hint">space · pause   ·   ↑↓ · year speed</div>
+<div id="hud"><div id="season">winter</div><div>day <b id="day">0</b> / 365 · year <b id="year">1</b></div><div id="ev"></div></div>
+<script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
+<script>
+/* ───────────────────────────────────────────────────────────────
+   GardenOS — Trial 08 · Layers Through Time
+   The stroke garden (07d) + the layer that drives everything: the
+   CANOPY. A bay-tree mass overhead casts DAPPLED SHADE that drifts
+   across the ground and plants; in autumn it drops LEAVES. Plus the
+   POLLINATOR layer — bees/hoverflies that hum around the blooms in
+   the warm months. Events surface in the HUD. Nocturne.
+   ─────────────────────────────────────────────────────────────── */
+
+const YEAR=365;
+let day=0, year=1, speed=10, paused=false;
+
+const renderer=new THREE.WebGLRenderer({antialias:true});
+renderer.setPixelRatio(Math.min(devicePixelRatio,1.75));
+renderer.setSize(innerWidth,innerHeight);
+document.body.appendChild(renderer.domElement);
+
+const FOG=new THREE.Color(0.02,0.05,0.06);
+const scene=new THREE.Scene();
+const cam=new THREE.PerspectiveCamera(52, innerWidth/innerHeight, 0.1, 200);
+cam.position.set(0,1.35,7.0); cam.lookAt(0,1.12,-14);
+
+const post=new THREE.Scene(), postCam=new THREE.Camera();
+const postQuad=new THREE.Mesh(new THREE.PlaneGeometry(2,2),null); post.add(postQuad);
+let sceneRT=new THREE.WebGLRenderTarget(innerWidth*renderer.getPixelRatio(),innerHeight*renderer.getPixelRatio(),
+  {type:THREE.HalfFloatType,minFilter:THREE.LinearFilter,magFilter:THREE.LinearFilter});
+
+const NOISE=`
+  float h21(vec2 p){p=fract(p*vec2(123.34,456.21));p+=dot(p,p+45.32);return fract(p.x*p.y);}
+  float vnoise(vec2 p){vec2 i=floor(p),f=fract(p);f=f*f*(3.-2.*f);
+    float a=h21(i),b=h21(i+vec2(1,0)),c=h21(i+vec2(0,1)),d=h21(i+vec2(1,1));
+    return mix(mix(a,b,f.x),mix(c,d,f.x),f.y);}
+  float fbm(vec2 p){float s=0.,a=.5;for(int i=0;i<4;i++){s+=a*vnoise(p);p*=2.0;a*=.5;}return s;}
+`;
+// dappled light from the canopy: drifting patches of sun & shade
+const DAPPLE=`
+  float dapple(vec2 wxz, float tm){
+    float d=fbm(wxz*0.55 + vec2(tm*0.05, tm*0.03));
+    d=mix(d, fbm(wxz*1.3 - vec2(tm*0.04,0.0)), 0.4);
+    return smoothstep(0.34,0.72,d);                 // 0 deep shade → 1 sunfleck
+  }
+`;
+
+// ── SKY ─────────────────────────────────────────────────────────────
+const sky=new THREE.Mesh(new THREE.PlaneGeometry(400,160),
+  new THREE.ShaderMaterial({depthWrite:false,
+    uniforms:{top:{value:new THREE.Color(0.01,0.02,0.05)},mid:{value:new THREE.Color(0.03,0.06,0.09)},
+              hor:{value:FOG.clone()},warm:{value:new THREE.Color(0.10,0.10,0.20)}},
+    vertexShader:`varying vec2 vUv; void main(){vUv=uv; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.);}`,
+    fragmentShader:`precision highp float; varying vec2 vUv; uniform vec3 top,mid,hor,warm;
+      void main(){float y=vUv.y; vec3 c=mix(hor,mid,smoothstep(0.0,0.35,y));
+        c=mix(c,top,smoothstep(0.3,1.0,y)); c+=warm*exp(-pow((y-0.04)/0.10,2.0))*0.5;
+        gl_FragColor=vec4(c,1.0);}`}));
+sky.position.set(0,60,-70); scene.add(sky);
+
+// ── GROUND (dappled) ────────────────────────────────────────────────
+const ground=new THREE.Mesh(new THREE.PlaneGeometry(400,400),
+  new THREE.ShaderMaterial({
+    uniforms:{cNear:{value:new THREE.Color(0.012,0.04,0.022)},cFar:{value:FOG.clone()},
+              fogColor:{value:FOG.clone()},fogNear:{value:6.0},fogFar:{value:40.0},time:{value:0},dap:{value:0.6}},
+    vertexShader:`varying vec3 vW; varying float vFog;
+      void main(){vW=position; vec4 mv=modelViewMatrix*vec4(position,1.0); vFog=-mv.z;
+        gl_Position=projectionMatrix*mv;}`,
+    fragmentShader:`precision highp float; varying vec3 vW; varying float vFog;
+      uniform vec3 cNear,cFar,fogColor; uniform float fogNear,fogFar,time,dap;
+${NOISE}
+${DAPPLE}
+      void main(){float pch=fbm(vW.xz*0.25);
+        vec3 c=mix(cNear,cFar,smoothstep(0.0,40.0,length(vW.xz)*0.5)); c*=0.7+0.5*pch;
+        float dp=dapple(vW.xz,time);
+        c*=mix(1.0-0.42*dap, 1.0+0.55*dap, dp);          // shade ↔ sunfleck (lighter shade)
+        c=mix(c*vec3(0.78,0.88,1.0), c, dp);             // shade reads cooler
+        c=mix(c,fogColor,smoothstep(fogNear,fogFar,vFog));
+        gl_FragColor=vec4(c,1.0);}`}));
+ground.rotation.x=-Math.PI/2; scene.add(ground);
+
+// ── CANOPY curtain (bay-tree mass hanging into the top of frame) ─────
+const canopy=new THREE.Mesh(new THREE.PlaneGeometry(120,16),
+  new THREE.ShaderMaterial({transparent:true,depthWrite:false,
+    uniforms:{time:{value:0},col:{value:new THREE.Color(0.01,0.035,0.02)}},
+    vertexShader:`varying vec2 vUv; void main(){vUv=uv; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.);}`,
+    fragmentShader:`precision highp float; varying vec2 vUv; uniform float time; uniform vec3 col;
+${NOISE}
+      void main(){
+        float leaf=fbm(vUv*vec2(22.0,9.0)+vec2(time*0.02,0.0));
+        float edge=1.0-vUv.y;                              // opaque at top, leafy at bottom
+        float a=smoothstep(0.15,0.62, edge + (leaf-0.5)*0.5);
+        float gap=smoothstep(0.78,0.86,leaf)*0.5;          // a few sky gaps
+        a=clamp(a-gap,0.0,1.0);
+        gl_FragColor=vec4(col*(0.8+0.6*leaf), a);
+      }`}));
+canopy.position.set(0,5.2,-9); scene.add(canopy);
+
+// ── PLANTS (07d archetypes + shapes, now dappled) ───────────────────
+const SPCOL=[ [1.0,0.26,0.42], [0.58,0.26,1.0], [1.0,0.46,0.13] ];
+const SPWIN=[ [55,110,170], [140,185,245], [235,275,325] ];
+const GREEN={
+  grass:[[0.015,0.06,0.025],[0.07,0.24,0.10]], mound:[[0.010,0.05,0.06],[0.05,0.17,0.16]],
+  cushion:[[0.012,0.055,0.04],[0.06,0.20,0.12]], spire:[[0.020,0.07,0.030],[0.10,0.30,0.12]],
+  umbel:[[0.018,0.06,0.030],[0.08,0.22,0.10]], daisy:[[0.020,0.07,0.030],[0.09,0.26,0.11]] };
+const R=Math.random;
+function jit(c,a){return [Math.max(0,c[0]+(R()*2-1)*a),Math.max(0,c[1]+(R()*2-1)*a),Math.max(0,c[2]+(R()*2-1)*a)];}
+function gauss(){return (R()+R()+R()-1.5)/1.5;}
+const S=[]; const STRIDE=23;
+function push(x,y,z,w,h,bend,arch,shade,flower,deep,lit,fcol,win,shape){
+  S.push(x,y,z, w,h, bend, R(), arch, shade, flower, deep[0],deep[1],deep[2], lit[0],lit[1],lit[2],
+         fcol[0],fcol[1],fcol[2], win[0],win[1],win[2], shape);
+}
+function emitPlant(cx,cz,arch,spec){
+  const g=GREEN[arch], fc=SPCOL[spec], win=SPWIN[spec];
+  const D=()=>jit(g[0],0.01), L=()=>jit(g[1],0.04);
+  if(arch==='grass'){const n=5+(R()*6|0);
+    for(let k=0;k<n;k++){const dx=gauss()*0.12,dz=gauss()*0.12;
+      push(cx+dx,0,cz+dz,0.045+R()*0.035,0.5+R()*0.8,(R()*2-1)*0.5,0,0.6+R()*0.6,R()<0.10?0.7:0.0,D(),L(),fc,win,0);}}
+  else if(arch==='mound'){const n=5+(R()*5|0);
+    for(let k=0;k<n;k++){const ang=R()*6.28,rr=R()*0.30;
+      push(cx+Math.cos(ang)*rr,0,cz+Math.sin(ang)*rr,0.20+R()*0.18,0.30+R()*0.34,(R()*2-1)*0.9,1,0.6+R()*0.5,0.0,D(),L(),fc,win,1);}}
+  else if(arch==='cushion'){const n=2+(R()*2|0);
+    for(let k=0;k<n;k++){const dx=gauss()*0.18,dz=gauss()*0.10;
+      push(cx+dx,0,cz+dz,0.55+R()*0.45,0.32+R()*0.26,(R()*2-1)*0.2,5,0.55+R()*0.4,0.0,D(),L(),fc,win,5);}
+    for(let k=0;k<3;k++){const dx=gauss()*0.2,dz=gauss()*0.15;
+      push(cx+dx,0,cz+dz,0.16+R()*0.12,0.22+R()*0.2,(R()*2-1)*0.8,1,0.6+R()*0.4,0.0,D(),L(),fc,win,1);}}
+  else if(arch==='spire'){const n=1+(R()*2|0);
+    for(let k=0;k<n;k++){const dx=gauss()*0.07,dz=gauss()*0.07;
+      push(cx+dx,0,cz+dz,0.05+R()*0.05,1.5+R()*1.4,(R()*2-1)*0.35,2,0.7+R()*0.5,1.0,D(),L(),fc,win,2);}
+    for(let k=0;k<4;k++){const dx=gauss()*0.13,dz=gauss()*0.13;
+      push(cx+dx,0,cz+dz,0.18+R()*0.14,0.3+R()*0.3,(R()*2-1)*0.8,1,0.6+R()*0.4,0.0,D(),L(),fc,win,1);}}
+  else if(arch==='umbel'){const ball=0.7+R()*0.6;
+    push(cx,0,cz,0.04+R()*0.03,1.0+R()*0.8,(R()*2-1)*0.18,3,0.7+R()*0.4,ball,D(),L(),fc,win,3);
+    for(let k=0;k<3;k++){const dx=gauss()*0.1,dz=gauss()*0.1;
+      push(cx+dx,0,cz+dz,0.16+R()*0.12,0.26+R()*0.24,(R()*2-1)*0.8,1,0.55+R()*0.4,0.0,D(),L(),fc,win,1);}}
+  else {const n=5+(R()*5|0);
+    for(let k=0;k<n;k++){const dx=gauss()*0.16,dz=gauss()*0.16;
+      push(cx+dx,0,cz+dz,0.07+R()*0.06,0.42+R()*0.5,(R()*2-1)*0.6,4,0.6+R()*0.5,R()<0.7?1.0:0.0,D(),L(),fc,win,4);}}
+}
+function pickArch(){const r=R();
+  return r<0.22?'grass':r<0.44?'mound':r<0.60?'cushion':r<0.80?'daisy':r<0.91?'spire':'umbel';}
+const NPMAX=24000, NBEDS=95;
+for(let b=0;b<NBEDS && S.length/STRIDE<NPMAX;b++){
+  const z=THREE.MathUtils.lerp(6.5,-34,Math.pow(R(),0.6));
+  const xs=THREE.MathUtils.mapLinear(z,6.5,-34,11,40);
+  const cx=(R()*2-1)*xs, rad=THREE.MathUtils.lerp(0.5,1.7,R());
+  const arch=pickArch(), spec=R()<0.55?(z>1?0:1):(R()*3|0);
+  const count=6+(R()*18|0);
+  for(let p=0;p<count && S.length/STRIDE<NPMAX;p++) emitPlant(cx+gauss()*rad,z+gauss()*rad,arch,spec);
+}
+for(let i=0;S.length/STRIDE<NPMAX && i<700;i++){
+  const z=THREE.MathUtils.lerp(6.5,-34,Math.pow(R(),0.55));
+  const xs=THREE.MathUtils.mapLinear(z,6.5,-34,12,42);
+  emitPlant((R()*2-1)*xs,z,'grass',R()*3|0);
+}
+const NP=S.length/STRIDE, arr=Float32Array.from(S);
+function slice(off,size){const a=new Float32Array(NP*size);
+  for(let i=0;i<NP;i++)for(let j=0;j<size;j++)a[i*size+j]=arr[i*STRIDE+off+j]; return a;}
+const baseQ=new THREE.PlaneGeometry(1,1); baseQ.translate(0,0.5,0);
+const geo=new THREE.InstancedBufferGeometry();
+geo.index=baseQ.index; geo.attributes.position=baseQ.attributes.position; geo.attributes.uv=baseQ.attributes.uv;
+geo.instanceCount=NP;
+geo.setAttribute('iPos',new THREE.InstancedBufferAttribute(slice(0,3),3));
+geo.setAttribute('iScale',new THREE.InstancedBufferAttribute(slice(3,2),2));
+geo.setAttribute('iBend',new THREE.InstancedBufferAttribute(slice(5,1),1));
+geo.setAttribute('iSeed',new THREE.InstancedBufferAttribute(slice(6,1),1));
+geo.setAttribute('iArch',new THREE.InstancedBufferAttribute(slice(7,1),1));
+geo.setAttribute('iShade',new THREE.InstancedBufferAttribute(slice(8,1),1));
+geo.setAttribute('iFlower',new THREE.InstancedBufferAttribute(slice(9,1),1));
+geo.setAttribute('iDeep',new THREE.InstancedBufferAttribute(slice(10,3),3));
+geo.setAttribute('iLit',new THREE.InstancedBufferAttribute(slice(13,3),3));
+geo.setAttribute('iFcol',new THREE.InstancedBufferAttribute(slice(16,3),3));
+geo.setAttribute('iWin',new THREE.InstancedBufferAttribute(slice(19,3),3));
+geo.setAttribute('iShape',new THREE.InstancedBufferAttribute(slice(22,1),1));
+
+const strokeMat=new THREE.ShaderMaterial({
+  transparent:true, depthTest:true, depthWrite:false, side:THREE.DoubleSide,
+  uniforms:{ day:{value:0}, growth:{value:0}, time:{value:0}, camRight:{value:new THREE.Vector3(1,0,0)},
+             fogColor:{value:FOG.clone()}, fogNear:{value:6.0}, fogFar:{value:40.0}, dap:{value:0.6} },
+  vertexShader:`
+    attribute vec3 iPos,iDeep,iLit,iFcol,iWin; attribute vec2 iScale;
+    attribute float iBend,iSeed,iArch,iShade,iFlower,iShape;
+    uniform float day,growth,time; uniform vec3 camRight;
+    varying vec2 vUv; varying float vFog,vShape,vShade,vSeed,vFlower,vE; varying vec3 vDeep,vLit,vFcol; varying vec2 vWXZ;
+    float wstate(float d,vec3 w){ if(d<w.x||d>w.z) return 0.0;
+      return smoothstep(w.x,w.y,d)*(1.0-smoothstep(w.y,w.z,d)); }
+    void main(){
+      vUv=uv; vShape=iShape; vShade=iShade; vSeed=iSeed; vFlower=iFlower;
+      vDeep=iDeep; vLit=iLit; vFcol=iFcol; vE=wstate(day,iWin)*(0.5+0.5*iSeed);
+      float w=iScale.x, hgt=iScale.y*(0.16+0.84*growth);
+      float sway=sin(time*0.6+iSeed*30.0)*0.025*uv.y;
+      float bx=(uv.x-0.5)*w + sway + iBend*uv.y*uv.y;
+      vec3 world=iPos + camRight*bx + vec3(0.0,1.0,0.0)*(uv.y*hgt);
+      vWXZ=iPos.xz;
+      vec4 mv=viewMatrix*vec4(world,1.0); vFog=-mv.z;
+      gl_Position=projectionMatrix*mv;
+    }`,
+  fragmentShader:`precision highp float;
+    varying vec2 vUv; varying float vFog,vShape,vShade,vSeed,vFlower,vE; varying vec3 vDeep,vLit,vFcol; varying vec2 vWXZ;
+    uniform vec3 fogColor; uniform float fogNear,fogFar,time,dap;
+${NOISE}
+${DAPPLE}
+    void main(){
+      float y=clamp(vUv.y,0.0,1.0); int Sh=int(vShape+0.5);
+      float hw;
+      if(Sh==1) hw=pow(sin(3.14159*y),0.55);
+      else if(Sh==2) hw=(1.0-smoothstep(0.30,1.0,y)*0.65)*0.55;
+      else if(Sh==3){ float stem=step(y,0.80)*0.13;
+                      float ball=sqrt(max(0.0,1.0-pow((y-0.85)/0.16,2.0)))*step(0.66,y); hw=max(stem,ball); }
+      else if(Sh==4) hw=pow(sin(3.14159*clamp(y*0.82+0.13,0.0,1.0)),0.5);
+      else if(Sh==5) hw=sqrt(max(0.0,1.0-y*y));
+      else hw=1.0-smoothstep(0.12,1.0,y);
+      float ax=abs(vUv.x-0.5)*2.0;
+      float soft=smoothstep(hw,max(0.0,hw-0.20),ax);
+      if(soft<0.01 || hw<0.006) discard;
+      vec3 green=mix(vDeep,vLit,smoothstep(0.0,1.0,y))*vShade;
+      float dp=dapple(vWXZ,time);                          // canopy light reaches the plants too
+      green*=mix(1.0-0.32*dap,1.0+0.5*dap,dp);
+      green=mix(green*vec3(0.80,0.90,1.0),green,dp);
+      float tip=(Sh==3)?smoothstep(0.66,0.90,y):(Sh==2)?smoothstep(0.5,1.0,y):smoothstep(0.6,0.94,y);
+      vec3 col=green + vFcol*tip*vE*vFlower*3.6;
+      float fog=smoothstep(fogNear,fogFar,vFog);
+      col=mix(col,fogColor,fog);
+      gl_FragColor=vec4(col, soft*(1.0-fog*0.7));
+    }`
+});
+const strokes=new THREE.Mesh(geo,strokeMat); strokes.frustumCulled=false; scene.add(strokes);
+
+// ── POLLINATORS — bees/hoverflies humming around blooms ─────────────
+const NB=150;
+const bp=new Float32Array(NB*3), bSeed=new Float32Array(NB), bKind=new Float32Array(NB);
+for(let i=0;i<NB;i++){
+  const z=THREE.MathUtils.lerp(5.5,-18,Math.random());
+  bp[i*3]=(Math.random()*2-1)*THREE.MathUtils.mapLinear(z,5.5,-18,8,22);
+  bp[i*3+1]=0; bp[i*3+2]=z; bSeed[i]=Math.random(); bKind[i]=Math.random()<0.7?0:1; // 0 bee, 1 butterfly
+}
+const bg=new THREE.BufferGeometry();
+bg.setAttribute('position',new THREE.BufferAttribute(bp,3));
+bg.setAttribute('bSeed',new THREE.BufferAttribute(bSeed,1));
+bg.setAttribute('bKind',new THREE.BufferAttribute(bKind,1));
+const beeMat=new THREE.ShaderMaterial({transparent:true,depthTest:true,depthWrite:false,blending:THREE.AdditiveBlending,
+  uniforms:{time:{value:0},amt:{value:0},dpr:{value:renderer.getPixelRatio()},
+            fogColor:{value:FOG.clone()},fogNear:{value:6.0},fogFar:{value:40.0}},
+  vertexShader:`attribute float bSeed,bKind; uniform float time,amt,dpr;
+    varying float vK,vA,vFog;
+    void main(){
+      vK=bKind;
+      vec3 p=position;
+      float s=bSeed*40.0;
+      // erratic flight: two offset oscillators + bobbing
+      p.x += sin(time*(1.6+bKind*-0.8)+s)*0.7 + sin(time*0.7+s*1.7)*0.4;
+      p.z += cos(time*1.3+s*1.2)*0.6;
+      p.y = 0.35 + abs(sin(time*(3.0-bKind*1.8)+s))*0.5 + 0.2*sin(time*0.5+s);
+      vA = amt*smoothstep(0.0,0.2,amt)*(0.6+0.4*sin(time*2.0+s));
+      vec4 mv=viewMatrix*vec4(p,1.0); vFog=-mv.z;
+      gl_Position=projectionMatrix*mv;
+      gl_PointSize=(bKind>0.5?9.0:5.0)*dpr*(7.0/max(0.5,-mv.z));
+    }`,
+  fragmentShader:`precision highp float; varying float vK,vA,vFog;
+    uniform vec3 fogColor; uniform float fogNear,fogFar;
+    void main(){
+      vec2 d=gl_PointCoord-0.5; float r=length(d); if(r>0.5) discard;
+      float a=exp(-r*r*14.0)*vA; if(a<0.02) discard;
+      vec3 bee=vec3(1.0,0.82,0.32), fly=vec3(0.85,0.85,1.0);
+      vec3 c=mix(bee,fly,vK);
+      float fog=smoothstep(fogNear,fogFar,vFog);
+      gl_FragColor=vec4(c*a*(1.0-fog),1.0);
+    }`});
+const bees=new THREE.Points(bg,beeMat); bees.frustumCulled=false; scene.add(bees);
+
+// ── AUTUMN LEAF-FALL — bay leaves dropping from the canopy ──────────
+const NL=320;
+const lp=new Float32Array(NL*3), lSeed=new Float32Array(NL);
+for(let i=0;i<NL;i++){ lp[i*3]=(Math.random()*2-1)*22; lp[i*3+1]=0; lp[i*3+2]=THREE.MathUtils.lerp(5.0,-22,Math.random()); lSeed[i]=Math.random(); }
+const lg=new THREE.BufferGeometry();
+lg.setAttribute('position',new THREE.BufferAttribute(lp,3));
+lg.setAttribute('lSeed',new THREE.BufferAttribute(lSeed,1));
+const leafMat=new THREE.ShaderMaterial({transparent:true,depthTest:true,depthWrite:false,
+  uniforms:{time:{value:0},amt:{value:0},dpr:{value:renderer.getPixelRatio()},
+            fogColor:{value:FOG.clone()},fogNear:{value:6.0},fogFar:{value:40.0}},
+  vertexShader:`attribute float lSeed; uniform float time,amt,dpr; varying float vA,vFog,vS;
+    void main(){
+      vS=lSeed; vec3 p=position;
+      float t=fract(lSeed + time*0.05*(0.6+lSeed));      // 1=top → 0=ground, looping
+      float top=5.5;
+      p.y = top*t;
+      p.x += sin(time*0.9 + lSeed*30.0)*0.9*(0.3+t) ;    // sway as it falls
+      vA = amt*(0.6+0.4*sin(time+lSeed*10.0))*1.5;
+      vec4 mv=viewMatrix*vec4(p,1.0); vFog=-mv.z;
+      gl_Position=projectionMatrix*mv;
+      gl_PointSize=9.0*dpr*(7.0/max(0.5,-mv.z));
+    }`,
+  fragmentShader:`precision highp float; varying float vA,vFog,vS; uniform vec3 fogColor; uniform float fogNear,fogFar;
+    void main(){ vec2 d=gl_PointCoord-0.5; float r=length(d); if(r>0.5) discard;
+      float a=smoothstep(0.5,0.1,r)*vA; if(a<0.02) discard;
+      vec3 amber=mix(vec3(0.8,0.45,0.12),vec3(0.6,0.3,0.08),vS);
+      float fog=smoothstep(fogNear,fogFar,vFog);
+      gl_FragColor=vec4(amber*a*(1.0-fog*0.8), a*(1.0-fog));
+    }`});
+const leaves=new THREE.Points(lg,leafMat); leaves.frustumCulled=false; scene.add(leaves);
+
+// ── POST ────────────────────────────────────────────────────────────
+const postU={src:{value:null},res:{value:new THREE.Vector2(innerWidth,innerHeight)},bloom:{value:1.0}};
+const presentMat=new THREE.ShaderMaterial({uniforms:postU,
+  vertexShader:`varying vec2 vUv; void main(){vUv=uv; gl_Position=vec4(position,1.);}`,
+  fragmentShader:`precision highp float; varying vec2 vUv;
+    uniform sampler2D src; uniform vec2 res; uniform float bloom;
+    vec3 aces(vec3 x){return clamp((x*(2.51*x+0.03))/(x*(2.43*x+0.59)+0.14),0.,1.);}
+    void main(){ vec3 base=texture2D(src,vUv).rgb; vec3 b=vec3(0.); float tot=0.;
+      for(int i=1;i<=10;i++){float fr=float(i); float rad=fr*1.1/res.y; float w=1.0/(fr*fr);
+        for(int k=0;k<8;k++){float a=float(k)/8.*6.2831; b+=texture2D(src,vUv+vec2(cos(a),sin(a))*rad).rgb*w; tot+=w;}}
+      b/=tot; b=max(b-0.11,0.0)*1.25; vec3 col=base + b*bloom;
+      col=aces(col*1.16); col=pow(col,vec3(0.90));
+      float v=1.0-0.5*smoothstep(0.2,1.3,length(vUv-0.5))*2.0; v=clamp(v,0.0,1.0);
+      gl_FragColor=vec4(col*v,1.0);
+    }`});
+
+// ── season + events + loop ──────────────────────────────────────────
+const SEASONS=[{n:'winter',t:0},{n:'spring',t:80},{n:'summer',t:172},{n:'autumn',t:264},{n:'winter',t:340}];
+function seasonName(d){for(let i=0;i<4;i++)if(d>=SEASONS[i].t&&d<SEASONS[i+1].t)return SEASONS[i].n;return'winter';}
+function smooth(a,b,x){x=Math.min(1,Math.max(0,(x-a)/(b-a)));return x*x*(3-2*x);}
+function growthOf(d){return smooth(35,150,d)*(1-smooth(250,345,d));}
+function pollinatorsOf(d){return smooth(120,150,d)*(1-smooth(250,290,d));}   // bees: late spring → early autumn
+function leafFallOf(d){return smooth(255,290,d)*(1-smooth(330,360,d));}      // autumn drop
+// event ticker
+const EVENTS=[ [60,'first shoots'],[95,'foxglove emergence'],[128,'first bee sighting'],
+  [150,'allium spheres'],[185,'high summer · the garden hums'],[225,'ammi & umbels peak'],
+  [262,'bay leaf drop begins'],[300,'autumn seed fall'],[338,'first frost'],[350,'skeleton & hellebore'] ];
+function currentEvent(d){let e=''; for(const [t,name] of EVENTS){ if(d>=t) e=name; } return e;}
+
+const _r=new THREE.Vector3();
+let last=null;
+function frame(t){
+  requestAnimationFrame(frame);
+  if(last===null)last=t; const dtr=Math.min((t-last)/1000,0.05); last=t;
+  if(!paused){ day+=speed*dtr; if(day>=YEAR){day-=YEAR; year++;} }
+  const g=growthOf(day), tm=t*0.001;
+  _r.setFromMatrixColumn(cam.matrixWorld,0); _r.y=0; _r.normalize();
+  strokeMat.uniforms.camRight.value.copy(_r);
+  strokeMat.uniforms.day.value=day; strokeMat.uniforms.growth.value=Math.max(0.12,g); strokeMat.uniforms.time.value=tm;
+  ground.material.uniforms.time.value=tm;
+  canopy.material.uniforms.time.value=tm;
+  // canopy is in full leaf spring–autumn; bare in winter (dapple stronger when leaves are on)
+  const leafOn=smooth(40,110,day)*(1-smooth(300,345,day));
+  ground.material.uniforms.dap.value=0.25+0.6*leafOn;
+  strokeMat.uniforms.dap.value=0.25+0.6*leafOn;
+  beeMat.uniforms.time.value=tm; beeMat.uniforms.amt.value=pollinatorsOf(day);
+  leafMat.uniforms.time.value=tm; leafMat.uniforms.amt.value=leafFallOf(day);
+
+  renderer.setRenderTarget(sceneRT); renderer.render(scene,cam);
+  postU.src.value=sceneRT.texture; postQuad.material=presentMat;
+  renderer.setRenderTarget(null); renderer.render(post,postCam);
+  document.getElementById('day').textContent=Math.floor(day);
+  document.getElementById('year').textContent=year;
+  document.getElementById('season').textContent=seasonName(day);
+  document.getElementById('ev').textContent=currentEvent(day);
+}
+requestAnimationFrame(frame);
+window.__setDay=v=>{day=v;}; window.__pause=v=>{paused=v;};
+
+addEventListener('resize',()=>{
+  renderer.setSize(innerWidth,innerHeight);
+  cam.aspect=innerWidth/innerHeight; cam.updateProjectionMatrix();
+  postU.res.value.set(innerWidth,innerHeight);
+  sceneRT.setSize(innerWidth*renderer.getPixelRatio(),innerHeight*renderer.getPixelRatio());
+});
+addEventListener('keydown',e=>{
+  if(e.code==='Space'){paused=!paused;e.preventDefault();}
+  if(e.code==='ArrowUp')speed=Math.min(speed*1.3,90);
+  if(e.code==='ArrowDown')speed=Math.max(speed/1.3,1);
+});
+</script>
+</body>
+</html>

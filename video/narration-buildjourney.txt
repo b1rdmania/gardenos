@@ -1,0 +1,11 @@
+This is how GardenOS got built. How a web page learned to grow a garden, one note at a time.
+It began as an abstract question. What does a plant mean when it stops being a flower and becomes light? The first sketches were just that: fields of colour, blooming and fading. A Rothko of the seasons.
+Underneath, we built a real engine. A reaction-diffusion simulation: a hundred and fifty thousand cells competing for light, so the ecology would grow itself rather than be drawn. It worked. Then it failed. By the second year the whole field collapsed into one flat wash. Living systems drift to equilibrium, so we fought back, with seasonal die-back and a slow rain of seed.
+But the real problem was simpler. From above, it looked like a petri dish, not a garden. So we moved the camera. We stood inside the border and looked out.
+Then the notes started coming. Make the plants individual, like brush strokes. Don't make everything an agave; give them rounder shapes. Add the living layers: dappled light, bees, the hum of a summer afternoon.
+Then a photo arrived: the real London garden. And with it, a turn. Make it daytime, and put the detail back into the leaves. We pulled everything into one scene. Brown, branching trees. Maples burning from gold to scarlet.
+We gave the ground structure: lawn, earth beds, a path up the middle. We threw out the generic plants and put in two dozen real ones, each on its own clock, so the whole garden wakes, flowers, browns and sleeps together.
+We gave the flowers real shapes. Then we put it live, on the open web.
+After that, the slow work. A bird bath, real grass, bulbs: the furniture of a cottage garden. We rebuilt the trees so the leaves grow out of the branches, not the air. The middle became an apple tree. Blossom, then fruit, then windfall on the grass. Every tree learned to turn in its own time, in its own colour.
+And last, a day inside the year. The light drops, and the lights come on.
+Built frame by frame, in conversation. A problem, a guess, a screenshot, and the next note.

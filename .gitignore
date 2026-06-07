@@ -1,0 +1,19 @@
+# deps + tooling (Playwright, only used to record video)
+node_modules/
+package.json
+package-lock.json
+
+# here.now publish state (claim tokens) + deployed dup of the engine
+.herenow/
+publish/
+
+# video intermediates (the two final .mp4 are kept)
+video/garden-raw.webm
+video/journey-silent.mp4
+video/vo*.aiff
+video/vo*.mp3
+video/vo*.m4a
+video/payload.json
+video/check_*.png
+
+.DS_Store
