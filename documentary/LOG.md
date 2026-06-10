@@ -848,3 +848,45 @@ and it's nearly free (a post tint + a handful of emissive points). Twilight, not
 midnight, keeps it legible and magical.
 **Remaining:** zones (front/woodland/patio as distinct areas); a bird that lands on the
 rim; stars/moon at the darkest dip; on-device mobile perf.
+
+---
+
+## Step 21 — Fresh-eyes review pass: enclosure, festoon scale, painterly floor
+**Date:** 2026-06-10
+**Input (user):** a cold review of the live piece three days on ("if you want to do
+those improvements, that would be great").
+**Decisions:**
+- **Enclosure** — the garden floated on an infinite mulch plane. Added weathered larch
+  **side fences** (slat shader, fogged) and a dark **hedge body plane** behind the back
+  hedge's leaf-dabs (irregular fbm-clipped top + sides, fog-resistant darkness) so the
+  dabs read as a clipped surface. Winter no longer shows a floating confetti cloud;
+  every season now reads as a *walled London garden*.
+- **Festoon scale** — the string lights were enormous floating orbs slicing across the
+  apple crown. Now 14 small bulbs (pointSize ~¼ previous), short low span (x ±1.8,
+  y≈1.6–2.0, z=5.0) so **every bulb reads against foliage, not sky**. Tried physical
+  posts to anchor the ends — they loomed black at frame edge; deleted (lesson below).
+- **Painterly floor strokes** — bed plants were hard-edged vector paddles fighting the
+  painterly canopy. Added per-stroke ragged edge (two sine bands on the silhouette) +
+  fbm interior veining, unifying the two visual languages.
+- **Foreground scale damping** — `nearDamp(z)`: plant + floret height scales down 0→50%
+  as z approaches the patio, killing the giant dark blades looming at frame edges.
+- **Honesty fixes** — caption now matches the scene ("golds deepen" 285, "the maple
+  blazes" 322 when it actually turns); windfall apples cleared by early winter (~day
+  336–352, staggered); pollinators fade out at dusk (they read as glowing lanterns
+  against the dark fences).
+- **Perf** — desktop pixel ratio 1.6→1.35 + bloom blur 36→24 taps: **25→38 fps** on the
+  M-series MBP at 1440×734. Mobile Q unchanged.
+**Artifact:** `../trial-13-flowerforms.html` → re-published (live verified byte-identical).
+**LIVE:** **https://eternal-birch-wjhm.here.now/**
+**Captures:** `captures/step21-winter-enclosure.png` (fences + clipped hedge — winter
+finally reads as *his* enclosed garden), `captures/step21-dusk-festoon.png` (small
+festoon draped against foliage, insects gone home), `captures/step21-maple-blazes.png`
+(scarlet maple alone in a bare garden, caption true).
+**Learned:** enclosure is identity — the same planting reads as "demo" on an infinite
+plane and as "a garden" inside a fence line. And scale outliers near the camera or
+against the sky are what break the illusion first; fixing four small honesty details
+(captions, windfall, insects at dusk, floating bulbs) did more than any new feature
+would have. Anchoring a prop physically (the posts) can be worse than removing the
+need for the anchor (drape the string against foliage).
+**Remaining:** zones A–D; bird landing on the bath rim; stars/moon at darkest dip;
+on-device mobile frame-rate check.

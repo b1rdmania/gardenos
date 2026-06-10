@@ -1,296 +1,354 @@
 {
-  "project": "GardenOS",
-  "liveUrl": "https://eternal-birch-wjhm.here.now/",
-  "subtitle": "A living canvas for ecological time, rendered as light",
-  "thesis": "The artwork is not the flower but what the flower does over a year. The core unsolved problem: what does a plant mean when it stops being a flower and becomes a pixel?",
-  "endForm": "gallery / installation piece",
-  "updated": "2026-06-06",
-  "steps": [
-    {
-      "id": "00-reframe",
-      "date": "2026-06-06",
-      "title": "The reframe",
-      "kind": "decision",
-      "question": "Is GardenOS an 'AI garden visualiser'?",
-      "decision": "No — it is the experience of a garden through time. Spatial art vs temporal art. Render biological process as light, not image.",
-      "learned": "Named the one hard problem all later steps probe: what a plant means as a pixel.",
-      "artifacts": ["white-paper (5-layer architecture)"],
-      "captures": []
-    },
-    {
-      "id": "01-trial-ecological-time",
-      "date": "2026-06-06",
-      "title": "Trial 01 · Ecological Time",
-      "kind": "build",
-      "tool": "p5.js (single HTML file)",
-      "question": "Can temporal abstraction read as both beautiful and legible — can you tell species apart from behaviour alone?",
-      "decision": "Smallest probe. Each species is a verb, not a picture: tulip=colour field, allium=ring, foxglove=spire, hosta=shadow mass, poppy=ignition.",
-      "learned": "Establishes the interpretation vocabulary before any renderer work.",
-      "artifacts": ["../trial-01-ecological-time.html"],
-      "captures": []
-    },
-    {
-      "id": "02-direction-fork",
-      "date": "2026-06-06",
-      "title": "Direction fork",
-      "kind": "decision",
-      "question": "Push the thesis (non-garden dataset) or the beauty (shaders)? What is the end-form?",
-      "decision": "Chase the beauty. End-form = gallery / installation piece.",
-      "learned": "For an installation, presence and beauty ARE the product, so the shader is the correct next build — not a detour.",
-      "artifacts": [],
-      "captures": []
-    },
-    {
-      "id": "03-trial-living-canvas",
-      "date": "2026-06-06",
-      "title": "Trial 03 · Living Canvas",
-      "kind": "build",
-      "tool": "Three.js + raw GLSL (single HTML file)",
-      "question": "Does the idea survive the Rothko / LED quality it promises?",
-      "decision": "Ping-pong feedback buffer (light decays + diffuses = memory) + multi-tap bloom + ACES tonemap. CPU computes garden state, shader paints behaviours.",
-      "learned": "FINDING: bloom is drowning legibility — the allium ring dissolves into glow. The beauty-vs-readability tension appears on the first shader frame. Next: tune bloom / give each species a signature that survives it.",
-      "artifacts": ["../trial-03-living-canvas.html"],
-      "captures": [
-        "captures/step03-summer-peak.png",
-        "captures/step03-spring-tulips.png"
-      ]
-    },
-    {
-      "id": "04-tune-allium-ring",
-      "date": "2026-06-06",
-      "title": "Tune bloom · recover the allium ring",
-      "kind": "finding",
-      "tool": "Three.js + GLSL (threshold bloom)",
-      "question": "Can structural behaviours survive the bloom that gives the piece its gallery quality?",
-      "decision": "Threshold the bloom (b = max(b-0.12,0)*1.25) so only the bright tail halos; tighter glow radius + 1/fr^2 falloff; bloom 1.15->0.62; added a hard ring-core term to allium; tightened feedback diffusion 1.4->0.9.",
-      "learned": "Beauty-vs-readability is resolvable, not a trade-off: bloom the bright tail, protect the cores. Reusable principle — every species gets a crisp core that bloom can halo but not erase. Side-effect: darker ground, higher contrast, tulip/hosta masses read better too.",
-      "artifacts": ["../trial-03-living-canvas.html"],
-      "captures": ["captures/step04-summer-tuned.png"]
-    },
-    {
-      "id": "04.5-pressure-test-shortcuts",
-      "date": "2026-06-06",
-      "title": "Pressure-test: have we taken shortcuts?",
-      "kind": "decision",
-      "question": "Are we shipping something live rather than building the full advanced suite?",
-      "decision": "Yes, deliberately. Trials 01-03 keyframed the entire biology — a mood-board of output, not the system. The advanced move (GPGPU ecological substrate) IS the point of the project, so build it now. Wrote ARCHITECTURE.md as the 5-layer spec.",
-      "learned": "Three real ceilings (not deferred polish): no simulation, all hardcoded in one file, renderer capped at 16 entities.",
-      "artifacts": ["documentary/ARCHITECTURE.md"],
-      "captures": []
-    },
-    {
-      "id": "05-substrate",
-      "date": "2026-06-06",
-      "title": "Trial 05 · Ecological Substrate (Layer 2 for real)",
-      "kind": "build",
-      "tool": "Three.js + GLSL GPGPU (ping-pong FBOs, half-float field)",
-      "question": "Can spread, competition, succession and multi-year change EMERGE from a GPU simulation instead of being keyframed?",
-      "decision": "Spatial Lotka-Volterra reaction-diffusion: RGBA field (3 species + shared resource), 512x288 ~147k cells, diffusion + competition + seasonal growth windows, timestep tied to days elapsed.",
-      "learned": "Proven, but failed twice instructively. Bug 1: isolated point-spores evaporate via diffusion (negative Laplacian >> growth) -> fix: smooth FBM seeding + day-clocked timestep. Bug 2: naive shared-resource model is STABILIZING -> homogenizes to a uniform wash by Year 2 -> fix: seasonal die-back clears the canvas + patchy year-drifting spore rain reseeds it (prevents both extinction and homogenization, gives Year2 != Year1). Knife-edge: too little death homogenizes, too much goes extinct; real ecology resolves it with a seed bank. Keyframing sidestepped the hardest, most interesting problem.",
-      "artifacts": ["../trial-05-substrate.html"],
-      "captures": [
-        "captures/step05-substrate-summer.png",
-        "captures/step05-spring.png",
-        "captures/step05-year2-winter.png",
-        "captures/step05b-autumn.png",
-        "captures/step05b-year2-summer.png"
-      ]
-    },
-    {
-      "id": "06-firstperson-garden",
-      "date": "2026-06-06",
-      "title": "Trial 06 · First-Person Garden (the camera change)",
-      "kind": "build",
-      "tool": "Three.js perspective scene (layered billboards + fog + threshold bloom)",
-      "question": "User: it doesn't look like a garden — make it first-person, looking out, with depth layers, growth coming up, green as background.",
-      "decision": "Wrong camera, not wrong idea. Perspective scene: 12 vegetation billboards receding into green fog (depth + 'green background'), per-column foliage silhouettes rising with a seasonal growth curve (growth coming up), blooms as colour events rising through foliage tops with per-season palettes (spring red/gold, summer violet/white, autumn ember). Carried threshold-bloom + ACES.",
-      "learned": "The project's legibility lived in the VIEWPOINT, not the simulation — the same seasonal idea reads as mush from above and as a garden from within. HONEST GAP: Trial 06 is driven by a season curve, NOT the Trial 05 substrate, so emergent spread/competition/succession are gone again. Got the camera right but dropped the ecology. Trial 07 must feed the substrate's species fields in as the planting map for this perspective renderer.",
-      "artifacts": ["../trial-06-firstperson-garden.html"],
-      "captures": [
-        "captures/step06-summer.png",
-        "captures/step06-spring-bloom.png",
-        "captures/step06-summer-bloom.png"
-      ]
-    },
-    {
-      "id": "06b-variants",
-      "date": "2026-06-06",
-      "title": "Trial 06b · Garden Variants (aesthetic fork)",
-      "kind": "build",
-      "tool": "Three.js, preset-driven (4 looks, live-switchable keys 1-4)",
-      "question": "Refine the first-person garden with a few variants to choose a look.",
-      "decision": "One file, four presets switchable live under identical geometry/season: Giverny (painterly warm), Nocturne (dark gallery/LED, blooms as light), Meadow (sunlit dense gold), Sumi (muted fog, sparse, negative space). Each drives fog/sky/ground/greens/bloom/palette/post.",
-      "learned": "Four clearly differentiated directions. Shared remaining flaw: blooms read as horizontal aurora-bands hugging the ridge, not discrete flowers; plus a foreground seam/streak artifact. Real fix = render blooms as point sprites / instanced flowers, deferred until a direction is chosen.",
-      "artifacts": ["../trial-06b-variants.html"],
-      "captures": [
-        "captures/step06b-1-giverny.png",
-        "captures/step06b-2-nocturne.png",
-        "captures/step06b-3-meadow.png",
-        "captures/step06b-4-sumi.png"
-      ]
-    },
-    {
-      "id": "07a-nocturne-points",
-      "date": "2026-06-06",
-      "title": "Nocturne locked + blooms as points",
-      "kind": "build",
-      "tool": "Three.js Points particle field",
-      "question": "Make blooms read as discrete points of light, not aurora-bands.",
-      "decision": "Locked Nocturne. Replaced per-column bloom glow with ~1800 particle sprites tied to species season windows, rising and igniting in season, fog dissolving far ones.",
-      "learned": "Points are the right primitive but read faint against the bright foliage silhouette WALL — user named the deeper problem: plants are a 'square block', not individual plants.",
-      "artifacts": ["../trial-07a-nocturne.html"],
-      "captures": ["captures/step07a-bloompoints.png"]
-    },
-    {
-      "id": "07b-strokes",
-      "date": "2026-06-06",
-      "title": "Brush Strokes — foliage as individual plants",
-      "kind": "build",
-      "tool": "Three.js InstancedBufferGeometry (~16k billboarded strokes)",
-      "question": "User: plants shouldn't be one square block — render individual plants, like brush strokes.",
-      "decision": "Removed the billboard silhouette walls. Foliage is now ~16k individual instanced strokes — tapered Y-billboarded brush marks rising from the ground, per-instance height/width/shade/species + 30% flowering. Flowering plants ignite an HDR tip in their season → post bloom makes points of light. Foliage and blooms both discrete instances.",
-      "learned": "Breakthrough for the look — reads unmistakably as individual plants receding to horizon; 16k strokes run fine. Remaining: reads as uniform MEADOW not a structured border — needs clumping (beds/drifts), more height variation / tall architectural plants, summer violet still pale.",
-      "artifacts": ["../trial-07b-strokes.html"],
-      "captures": [
-        "captures/step07b-strokes-spring.png",
-        "captures/step07b-strokes-summer.png"
-      ]
-    },
-    {
-      "id": "07c-plant-types",
-      "date": "2026-06-06",
-      "title": "Plant Types — distinct foliage, clumping, tall plants",
-      "kind": "build",
-      "tool": "Three.js instanced strokes composed into archetypes (~22k)",
-      "question": "User: foliage should differ by plant (not one stroke x16k); think about clumping + tall plants.",
-      "decision": "Compose the garden from 5 plant ARCHETYPES, each a different arrangement of strokes with its own foliage colour/shape/flowering: grass (arching tuft), mound (broad blue-green hosta, foliage only), spire (tall, flowers up top), umbel (tall stem + bright ball), daisy (bushy heads). Planted in DRIFTS (clustered beds + gaussian spread) not even scatter; loose grass matrix between. Per-instance foliage colour/shape/bend/flower-window as attributes (no uniform-array indexing).",
-      "learned": "Archetypes + clumping turn the uniform meadow into a border with structure; tall spires/umbels above the low foliage give the 'layers / coming up' read the user wanted. Remaining: tall accents read as uniform 'light sticks' (vary thickness/curve); summer violet washes white; drifts could be stronger; still a season curve.",
-      "artifacts": ["../trial-07c-plant-types.html"],
-      "captures": [
-        "captures/step07c-planttypes-spring.png",
-        "captures/step07c-planttypes-summer.png"
-      ]
-    },
-    {
-      "id": "07d-roundness",
-      "date": "2026-06-06",
-      "title": "Roundness — silhouette shapes",
-      "kind": "build",
-      "tool": "Three.js instanced strokes + per-instance silhouette shape",
-      "question": "User: everything looks like an agave plant — no roundness.",
-      "decision": "Every stroke now carries a silhouette shape (half-width profile): blade(pointed), leaf(ovate rounded), stem, ball(stem+round bloom head), bush(soft rounded), dome(low cushion). Rebalanced toward rounded forms + added cushion archetype; varied spire/umbel width+curve (no more light-sticks); tighter drifts; more saturated violet + gentler tip so it keeps colour.",
-      "learned": "Roundness lives in the silhouette profile; one iShape attribute unlocks the whole spiky<->round, tall<->low vocabulary within the same instanced system. Reads as mixed planting now. Remaining: a touch sparse/dark (tighter drifts left bare ground); violet still slightly pale at peak; still a season curve.",
-      "artifacts": ["../trial-07d-roundness.html"],
-      "captures": [
-        "captures/step07d-roundness-spring.png",
-        "captures/step07d-roundness-summer.png"
-      ]
-    },
-    {
-      "id": "08-layers",
-      "date": "2026-06-06",
-      "title": "Layers Through Time (six-layer model)",
-      "kind": "build",
-      "tool": "Three.js: dapple field + particle layers (pollinators, leaf-fall) + event ticker",
-      "question": "User design: garden = six ecological layers + four zones, simulated as events not plants, as a time machine.",
-      "decision": "Captured the model in MODEL.md. Built the layer that drives everything (CANOPY: drifting dappled shade sampled by ground+plants, leaf-on tied to season; autumn LEAF-FALL particles; canopy curtain overhead) + the POLLINATOR layer (~150 bee/hoverfly motes, erratic flight, amount tracks warm season) + an EVENT ticker in the HUD. On top of the 07d stroke garden.",
-      "learned": "The conceptual turn from 'a garden' to 'layers moving through time'. Dappled shade alone transforms the read (cool-lit foreground hosta = best frame yet); pollinators + leaf-fall give life + events. Needed a legibility pass (Nocturne + shade compounded to murk → lightened shade, lifted exposure, brightened leaves). Remaining: canopy silhouette felt not seen (overhead curtain too dark); still one zone on a season curve.",
-      "artifacts": ["../trial-08-layers.html","documentary/MODEL.md"],
-      "captures": [
-        "captures/step08-summer-hum.png",
-        "captures/step08-autumn-leaffall.png"
-      ]
-    },
-    {
-      "id": "09-canopy-day",
-      "date": "2026-06-06",
-      "title": "Daytime Canopy (the garden is mostly leaves)",
-      "kind": "build",
-      "tool": "Three.js: ~40k leaf-dab instances clustered into foliage masses + branches + petal particles",
-      "question": "User (with garden photo): need DAYTIME; more nuance in the LEAVES — blossom + colour change; the ground is not everything.",
-      "decision": "Pivot to daytime, canopy-first. Foliage masses built from ~40k camera-billboarded leaf-dabs (trees/shrubs/yellow Acer/blossom shrubs, layered), over dark branches. Per-leaf seasonal logic, staggered: spring leaf-out + blossom -> summer green -> autumn colour turn (varied amber/orange/red) + leaf fall -> winter bare branches. Blossom-fall & leaf-fall petal particles. Bright daytime palette, soft post.",
-      "learned": "Leaf-dab masses + per-leaf seasonal logic is the right model for 'nuance in the leaves' — the patchy staggered autumn turn is the most convincing seasonal frame yet; Acer proves per-mass colour identity. Remaining: composition reads as a bank across a lawn, not enclosing (big trees need to arch overhead/fill top; empty sky+ground); branches faint; daytime canopy now lives apart from the Nocturne ground garden — they must merge into one scene.",
-      "artifacts": ["../trial-09-canopy-day.html"],
-      "captures": [
-        "captures/step09-summer.png",
-        "captures/step09-autumn-turn.png",
-        "captures/step09-spring-blossom.png"
-      ]
-    },
-    {
-      "id": "10-merge",
-      "date": "2026-06-06",
-      "title": "The Merge (daytime master)",
-      "kind": "build",
-      "tool": "Three.js: canopy leaf-dabs + recursive brown branches + 07d floor strokes + dapple + pollinators + petals, one daytime scene",
-      "question": "User: daytime is master; organic brown trunks; merge the three (canopy framing first); richer autumn esp. maples.",
-      "decision": "ONE daytime scene merging canopy(09)+floor(07d)+layers(08). Enclosing framing (overhead+side canopy masses, camera low looking up). Recursive 3D brown branch generator (trunk->sub-branches, tapered, woody) as camera-billboard thick-lines. Maple autumn: per-leaf base+MID+LATE colour stops, staggered green->gold->red, maple gold->scarlet vs others yellow->amber. Floor strokes (daytime greens, dappled) + pollinators + blossom/leaf-fall.",
-      "learned": "The convergence works — first time it reads as the WHOLE garden, daylight, alive through the year. Recursive brown branches + maple gold->scarlet are the asks landed; autumn-maples is the best frame yet. Remaining: empty mid-ground band between canopy and floor (needs bridging shrubs/climbers); floor plants stay green in autumn (should turn/decline); canopy masses ball-like, trunk lone.",
-      "artifacts": ["../trial-10-merge.html"],
-      "captures": [
-        "captures/step10-summer.png",
-        "captures/step10-autumn-maples.png",
-        "captures/step10-spring.png"
-      ]
-    },
-    {
-      "id": "11-beds",
-      "date": "2026-06-06",
-      "title": "Beds, Path & Flies (ground structure)",
-      "kind": "build",
-      "tool": "Three.js: ground-zone shader (lawn/earth/path/patio) + bed-constrained planting + 5-kind varied flies",
-      "question": "User: need lawn/earth/garden beds with structure + a path; more flowers; more varied flies.",
-      "decision": "Shared bedEdge(z)/pathC(z) (JS+GLSL, true world coords) carve the floor into mown lawn / earth beds (side borders) / stone path winding up the middle / front patio, each coloured + dappled. Floor strokes generated INSIDE the beds as drifts; sparse lawn grass. Richer 8-colour flower palette across the season, brighter tips. Five fly kinds (bumblebee/honeybee/hoverfly/2 butterflies) with distinct size/colour/speed/motion-mode, ~240.",
-      "learned": "Ground structure is what makes it read as a DESIGNED garden, not plants on a plane — path leads the eye in, beds home the planting, lawn/earth/stone read distinctly; varied flies add life cheaply. Remaining: floor plants stay green in autumn (unify seasonal clock); path wide/straight; flies could be denser.",
-      "artifacts": ["../trial-11-beds.html"],
-      "captures": [
-        "captures/step11-summer.png",
-        "captures/step11-flowers.png",
-        "captures/step11-autumn.png"
-      ]
-    },
-    {
-      "id": "12-plants",
-      "date": "2026-06-06",
-      "title": "A Real Plant Palette (+ unified seasonal clock)",
-      "kind": "build",
-      "tool": "Three.js: ~23-species plant library with per-plant lifecycle in the floor shader",
-      "question": "User: unify the seasonal clock; too many grasses (not a London cottage garden); use the plant list, more realistic replicants.",
-      "decision": "Replaced generic archetypes with a library of ~23 named London cottage/woodland species (hellebore, brunnera, pulmonaria, epimedium, heuchera[purple], bergenia, fern, solomon's seal, ajuga, foxglove, verbascum, veronicastrum, ammi, agapanthus, nepeta, allium, geranium, hydrangea, lobelia, snowdrop, crocus, daffodil, grass[rare]). Each carries shape/foliage/flower/height + wake/sleep/evergreen/autumn-foliage. Per-plant lifecycle in the shader unifies the clock: plants wake in season, brown to autumn colour, die back (unless evergreen); bulbs pulse. Two new shapes (fern frond, flat umbel); packed scalars into vec4 for the 16-attribute GPU limit; drifts of one species; grass weighted down.",
-      "learned": "Per-plant lifecycle turns a season CURVE into a garden YEAR: spring bulbs -> flowering border -> autumn die-back IN SYNC with the canopy -> winter bare-bones + evergreen structure + snowdrops. Named palette + distinctive foliage (purple heuchera, big bergenia, ferns) reads as a real London border. Winter showcases the recursive brown branches. Strongest the piece has been. Remaining: flower FORMS still approximate (coloured tip masks, no true foxglove-spike/allium-globe geometry); bulbs/accents could be denser; path wide.",
-      "artifacts": ["../trial-12-plants.html"],
-      "captures": [
-        "captures/step12-summer.png",
-        "captures/step12-autumn.png",
-        "captures/step12-winter.png"
-      ]
-    },
-    {
-      "id": "13-flowerforms",
-      "date": "2026-06-06",
-      "title": "Flower Forms & Full Beds",
-      "kind": "build",
-      "tool": "Three.js: per-species floret generator (~16-30k flower-dab instances) + denser planting",
-      "question": "User: real flower forms + fill the beds in.",
-      "decision": "Replaced colour tip-masks with a FLORET system: per-species FORMS map drives emitFlorets() laying flower dabs in shape — spike (foxglove/verbascum), globe (allium/agapanthus), umbel (ammi), mophead (hydrangea), head (geranium/hellebore), haze (nepeta/brunnera), bell (solomon's seal), single (bulbs), plume (grass). Florets are instanced billboards fading on each plant's bloom window with a bright centre; foliage strokes now pure green. Filled beds: drifts 170->300, wider borders, FMAX 17k->24k.",
-      "learned": "Flower FORM is a big realism jump — foxglove reads as a spike of bells, allium as a globe, not a smear; form clusters fade per plant's bloom window so borders change shape through the season; denser drifts look gardened not sparse. Unified clock survived (florets seasonal, beds brown with canopy). Remaining: floral ABUNDANCE could go higher; florets are dabs not petal geometry; path wide.",
-      "artifacts": ["../trial-13-flowerforms.html"],
-      "captures": [
-        "captures/step13-summer.png",
-        "captures/step13-flowers.png",
-        "captures/step13-autumn.png"
-      ]
-    }
-  ],
-  "openThreads": [
-    "Floral ABUNDANCE — more florets / more of the bed flowering at once; florets are billboard dabs not true petal geometry",
-    "Bridge the empty MID-GROUND band between canopy-bottom and the low floor (continuous shrubs/climbers — the photo has no gap)",
-    "Soften path (stepping-stones not a wide strip); denser flies; even more continuous bed colour",
-    "Refine canopy: masses less ball-like; trunk less lone / branches connect into crown; denser foliage",
-    "Build per MODEL.md: ZONES A-D; named woodland-floor species; BULB pulses; HUMAN-trace layer (watering can, cat, patio lights)",
-    "TRIAL 07 (synthesis): drive the planting from the Trial 05 substrate — species density field decides WHICH ARCHETYPE grows WHERE — so the brush-stroke garden is genuinely ecological (emergent competition/succession), not a season curve",
-    "Make the engine data-driven: load Layer-1 JSON species instead of hardcoded (unlocks Trial 02, the non-garden dataset)",
-    "Upgrade render: Kawase bloom pyramid (80-tap brute force won't scale to 4K/LED)",
-    "Decide installation framing: aspect, loop length, idle vs interactive, LED/Art-Net output"
-  ]
+ "project": "GardenOS",
+ "liveUrl": "https://eternal-birch-wjhm.here.now/",
+ "subtitle": "A living canvas for ecological time, rendered as light",
+ "thesis": "The artwork is not the flower but what the flower does over a year. The core unsolved problem: what does a plant mean when it stops being a flower and becomes a pixel?",
+ "endForm": "gallery / installation piece",
+ "updated": "2026-06-10",
+ "steps": [
+  {
+   "id": "00-reframe",
+   "date": "2026-06-06",
+   "title": "The reframe",
+   "kind": "decision",
+   "question": "Is GardenOS an 'AI garden visualiser'?",
+   "decision": "No \u2014 it is the experience of a garden through time. Spatial art vs temporal art. Render biological process as light, not image.",
+   "learned": "Named the one hard problem all later steps probe: what a plant means as a pixel.",
+   "artifacts": [
+    "white-paper (5-layer architecture)"
+   ],
+   "captures": []
+  },
+  {
+   "id": "01-trial-ecological-time",
+   "date": "2026-06-06",
+   "title": "Trial 01 \u00b7 Ecological Time",
+   "kind": "build",
+   "tool": "p5.js (single HTML file)",
+   "question": "Can temporal abstraction read as both beautiful and legible \u2014 can you tell species apart from behaviour alone?",
+   "decision": "Smallest probe. Each species is a verb, not a picture: tulip=colour field, allium=ring, foxglove=spire, hosta=shadow mass, poppy=ignition.",
+   "learned": "Establishes the interpretation vocabulary before any renderer work.",
+   "artifacts": [
+    "../trial-01-ecological-time.html"
+   ],
+   "captures": []
+  },
+  {
+   "id": "02-direction-fork",
+   "date": "2026-06-06",
+   "title": "Direction fork",
+   "kind": "decision",
+   "question": "Push the thesis (non-garden dataset) or the beauty (shaders)? What is the end-form?",
+   "decision": "Chase the beauty. End-form = gallery / installation piece.",
+   "learned": "For an installation, presence and beauty ARE the product, so the shader is the correct next build \u2014 not a detour.",
+   "artifacts": [],
+   "captures": []
+  },
+  {
+   "id": "03-trial-living-canvas",
+   "date": "2026-06-06",
+   "title": "Trial 03 \u00b7 Living Canvas",
+   "kind": "build",
+   "tool": "Three.js + raw GLSL (single HTML file)",
+   "question": "Does the idea survive the Rothko / LED quality it promises?",
+   "decision": "Ping-pong feedback buffer (light decays + diffuses = memory) + multi-tap bloom + ACES tonemap. CPU computes garden state, shader paints behaviours.",
+   "learned": "FINDING: bloom is drowning legibility \u2014 the allium ring dissolves into glow. The beauty-vs-readability tension appears on the first shader frame. Next: tune bloom / give each species a signature that survives it.",
+   "artifacts": [
+    "../trial-03-living-canvas.html"
+   ],
+   "captures": [
+    "captures/step03-summer-peak.png",
+    "captures/step03-spring-tulips.png"
+   ]
+  },
+  {
+   "id": "04-tune-allium-ring",
+   "date": "2026-06-06",
+   "title": "Tune bloom \u00b7 recover the allium ring",
+   "kind": "finding",
+   "tool": "Three.js + GLSL (threshold bloom)",
+   "question": "Can structural behaviours survive the bloom that gives the piece its gallery quality?",
+   "decision": "Threshold the bloom (b = max(b-0.12,0)*1.25) so only the bright tail halos; tighter glow radius + 1/fr^2 falloff; bloom 1.15->0.62; added a hard ring-core term to allium; tightened feedback diffusion 1.4->0.9.",
+   "learned": "Beauty-vs-readability is resolvable, not a trade-off: bloom the bright tail, protect the cores. Reusable principle \u2014 every species gets a crisp core that bloom can halo but not erase. Side-effect: darker ground, higher contrast, tulip/hosta masses read better too.",
+   "artifacts": [
+    "../trial-03-living-canvas.html"
+   ],
+   "captures": [
+    "captures/step04-summer-tuned.png"
+   ]
+  },
+  {
+   "id": "04.5-pressure-test-shortcuts",
+   "date": "2026-06-06",
+   "title": "Pressure-test: have we taken shortcuts?",
+   "kind": "decision",
+   "question": "Are we shipping something live rather than building the full advanced suite?",
+   "decision": "Yes, deliberately. Trials 01-03 keyframed the entire biology \u2014 a mood-board of output, not the system. The advanced move (GPGPU ecological substrate) IS the point of the project, so build it now. Wrote ARCHITECTURE.md as the 5-layer spec.",
+   "learned": "Three real ceilings (not deferred polish): no simulation, all hardcoded in one file, renderer capped at 16 entities.",
+   "artifacts": [
+    "documentary/ARCHITECTURE.md"
+   ],
+   "captures": []
+  },
+  {
+   "id": "05-substrate",
+   "date": "2026-06-06",
+   "title": "Trial 05 \u00b7 Ecological Substrate (Layer 2 for real)",
+   "kind": "build",
+   "tool": "Three.js + GLSL GPGPU (ping-pong FBOs, half-float field)",
+   "question": "Can spread, competition, succession and multi-year change EMERGE from a GPU simulation instead of being keyframed?",
+   "decision": "Spatial Lotka-Volterra reaction-diffusion: RGBA field (3 species + shared resource), 512x288 ~147k cells, diffusion + competition + seasonal growth windows, timestep tied to days elapsed.",
+   "learned": "Proven, but failed twice instructively. Bug 1: isolated point-spores evaporate via diffusion (negative Laplacian >> growth) -> fix: smooth FBM seeding + day-clocked timestep. Bug 2: naive shared-resource model is STABILIZING -> homogenizes to a uniform wash by Year 2 -> fix: seasonal die-back clears the canvas + patchy year-drifting spore rain reseeds it (prevents both extinction and homogenization, gives Year2 != Year1). Knife-edge: too little death homogenizes, too much goes extinct; real ecology resolves it with a seed bank. Keyframing sidestepped the hardest, most interesting problem.",
+   "artifacts": [
+    "../trial-05-substrate.html"
+   ],
+   "captures": [
+    "captures/step05-substrate-summer.png",
+    "captures/step05-spring.png",
+    "captures/step05-year2-winter.png",
+    "captures/step05b-autumn.png",
+    "captures/step05b-year2-summer.png"
+   ]
+  },
+  {
+   "id": "06-firstperson-garden",
+   "date": "2026-06-06",
+   "title": "Trial 06 \u00b7 First-Person Garden (the camera change)",
+   "kind": "build",
+   "tool": "Three.js perspective scene (layered billboards + fog + threshold bloom)",
+   "question": "User: it doesn't look like a garden \u2014 make it first-person, looking out, with depth layers, growth coming up, green as background.",
+   "decision": "Wrong camera, not wrong idea. Perspective scene: 12 vegetation billboards receding into green fog (depth + 'green background'), per-column foliage silhouettes rising with a seasonal growth curve (growth coming up), blooms as colour events rising through foliage tops with per-season palettes (spring red/gold, summer violet/white, autumn ember). Carried threshold-bloom + ACES.",
+   "learned": "The project's legibility lived in the VIEWPOINT, not the simulation \u2014 the same seasonal idea reads as mush from above and as a garden from within. HONEST GAP: Trial 06 is driven by a season curve, NOT the Trial 05 substrate, so emergent spread/competition/succession are gone again. Got the camera right but dropped the ecology. Trial 07 must feed the substrate's species fields in as the planting map for this perspective renderer.",
+   "artifacts": [
+    "../trial-06-firstperson-garden.html"
+   ],
+   "captures": [
+    "captures/step06-summer.png",
+    "captures/step06-spring-bloom.png",
+    "captures/step06-summer-bloom.png"
+   ]
+  },
+  {
+   "id": "06b-variants",
+   "date": "2026-06-06",
+   "title": "Trial 06b \u00b7 Garden Variants (aesthetic fork)",
+   "kind": "build",
+   "tool": "Three.js, preset-driven (4 looks, live-switchable keys 1-4)",
+   "question": "Refine the first-person garden with a few variants to choose a look.",
+   "decision": "One file, four presets switchable live under identical geometry/season: Giverny (painterly warm), Nocturne (dark gallery/LED, blooms as light), Meadow (sunlit dense gold), Sumi (muted fog, sparse, negative space). Each drives fog/sky/ground/greens/bloom/palette/post.",
+   "learned": "Four clearly differentiated directions. Shared remaining flaw: blooms read as horizontal aurora-bands hugging the ridge, not discrete flowers; plus a foreground seam/streak artifact. Real fix = render blooms as point sprites / instanced flowers, deferred until a direction is chosen.",
+   "artifacts": [
+    "../trial-06b-variants.html"
+   ],
+   "captures": [
+    "captures/step06b-1-giverny.png",
+    "captures/step06b-2-nocturne.png",
+    "captures/step06b-3-meadow.png",
+    "captures/step06b-4-sumi.png"
+   ]
+  },
+  {
+   "id": "07a-nocturne-points",
+   "date": "2026-06-06",
+   "title": "Nocturne locked + blooms as points",
+   "kind": "build",
+   "tool": "Three.js Points particle field",
+   "question": "Make blooms read as discrete points of light, not aurora-bands.",
+   "decision": "Locked Nocturne. Replaced per-column bloom glow with ~1800 particle sprites tied to species season windows, rising and igniting in season, fog dissolving far ones.",
+   "learned": "Points are the right primitive but read faint against the bright foliage silhouette WALL \u2014 user named the deeper problem: plants are a 'square block', not individual plants.",
+   "artifacts": [
+    "../trial-07a-nocturne.html"
+   ],
+   "captures": [
+    "captures/step07a-bloompoints.png"
+   ]
+  },
+  {
+   "id": "07b-strokes",
+   "date": "2026-06-06",
+   "title": "Brush Strokes \u2014 foliage as individual plants",
+   "kind": "build",
+   "tool": "Three.js InstancedBufferGeometry (~16k billboarded strokes)",
+   "question": "User: plants shouldn't be one square block \u2014 render individual plants, like brush strokes.",
+   "decision": "Removed the billboard silhouette walls. Foliage is now ~16k individual instanced strokes \u2014 tapered Y-billboarded brush marks rising from the ground, per-instance height/width/shade/species + 30% flowering. Flowering plants ignite an HDR tip in their season \u2192 post bloom makes points of light. Foliage and blooms both discrete instances.",
+   "learned": "Breakthrough for the look \u2014 reads unmistakably as individual plants receding to horizon; 16k strokes run fine. Remaining: reads as uniform MEADOW not a structured border \u2014 needs clumping (beds/drifts), more height variation / tall architectural plants, summer violet still pale.",
+   "artifacts": [
+    "../trial-07b-strokes.html"
+   ],
+   "captures": [
+    "captures/step07b-strokes-spring.png",
+    "captures/step07b-strokes-summer.png"
+   ]
+  },
+  {
+   "id": "07c-plant-types",
+   "date": "2026-06-06",
+   "title": "Plant Types \u2014 distinct foliage, clumping, tall plants",
+   "kind": "build",
+   "tool": "Three.js instanced strokes composed into archetypes (~22k)",
+   "question": "User: foliage should differ by plant (not one stroke x16k); think about clumping + tall plants.",
+   "decision": "Compose the garden from 5 plant ARCHETYPES, each a different arrangement of strokes with its own foliage colour/shape/flowering: grass (arching tuft), mound (broad blue-green hosta, foliage only), spire (tall, flowers up top), umbel (tall stem + bright ball), daisy (bushy heads). Planted in DRIFTS (clustered beds + gaussian spread) not even scatter; loose grass matrix between. Per-instance foliage colour/shape/bend/flower-window as attributes (no uniform-array indexing).",
+   "learned": "Archetypes + clumping turn the uniform meadow into a border with structure; tall spires/umbels above the low foliage give the 'layers / coming up' read the user wanted. Remaining: tall accents read as uniform 'light sticks' (vary thickness/curve); summer violet washes white; drifts could be stronger; still a season curve.",
+   "artifacts": [
+    "../trial-07c-plant-types.html"
+   ],
+   "captures": [
+    "captures/step07c-planttypes-spring.png",
+    "captures/step07c-planttypes-summer.png"
+   ]
+  },
+  {
+   "id": "07d-roundness",
+   "date": "2026-06-06",
+   "title": "Roundness \u2014 silhouette shapes",
+   "kind": "build",
+   "tool": "Three.js instanced strokes + per-instance silhouette shape",
+   "question": "User: everything looks like an agave plant \u2014 no roundness.",
+   "decision": "Every stroke now carries a silhouette shape (half-width profile): blade(pointed), leaf(ovate rounded), stem, ball(stem+round bloom head), bush(soft rounded), dome(low cushion). Rebalanced toward rounded forms + added cushion archetype; varied spire/umbel width+curve (no more light-sticks); tighter drifts; more saturated violet + gentler tip so it keeps colour.",
+   "learned": "Roundness lives in the silhouette profile; one iShape attribute unlocks the whole spiky<->round, tall<->low vocabulary within the same instanced system. Reads as mixed planting now. Remaining: a touch sparse/dark (tighter drifts left bare ground); violet still slightly pale at peak; still a season curve.",
+   "artifacts": [
+    "../trial-07d-roundness.html"
+   ],
+   "captures": [
+    "captures/step07d-roundness-spring.png",
+    "captures/step07d-roundness-summer.png"
+   ]
+  },
+  {
+   "id": "08-layers",
+   "date": "2026-06-06",
+   "title": "Layers Through Time (six-layer model)",
+   "kind": "build",
+   "tool": "Three.js: dapple field + particle layers (pollinators, leaf-fall) + event ticker",
+   "question": "User design: garden = six ecological layers + four zones, simulated as events not plants, as a time machine.",
+   "decision": "Captured the model in MODEL.md. Built the layer that drives everything (CANOPY: drifting dappled shade sampled by ground+plants, leaf-on tied to season; autumn LEAF-FALL particles; canopy curtain overhead) + the POLLINATOR layer (~150 bee/hoverfly motes, erratic flight, amount tracks warm season) + an EVENT ticker in the HUD. On top of the 07d stroke garden.",
+   "learned": "The conceptual turn from 'a garden' to 'layers moving through time'. Dappled shade alone transforms the read (cool-lit foreground hosta = best frame yet); pollinators + leaf-fall give life + events. Needed a legibility pass (Nocturne + shade compounded to murk \u2192 lightened shade, lifted exposure, brightened leaves). Remaining: canopy silhouette felt not seen (overhead curtain too dark); still one zone on a season curve.",
+   "artifacts": [
+    "../trial-08-layers.html",
+    "documentary/MODEL.md"
+   ],
+   "captures": [
+    "captures/step08-summer-hum.png",
+    "captures/step08-autumn-leaffall.png"
+   ]
+  },
+  {
+   "id": "09-canopy-day",
+   "date": "2026-06-06",
+   "title": "Daytime Canopy (the garden is mostly leaves)",
+   "kind": "build",
+   "tool": "Three.js: ~40k leaf-dab instances clustered into foliage masses + branches + petal particles",
+   "question": "User (with garden photo): need DAYTIME; more nuance in the LEAVES \u2014 blossom + colour change; the ground is not everything.",
+   "decision": "Pivot to daytime, canopy-first. Foliage masses built from ~40k camera-billboarded leaf-dabs (trees/shrubs/yellow Acer/blossom shrubs, layered), over dark branches. Per-leaf seasonal logic, staggered: spring leaf-out + blossom -> summer green -> autumn colour turn (varied amber/orange/red) + leaf fall -> winter bare branches. Blossom-fall & leaf-fall petal particles. Bright daytime palette, soft post.",
+   "learned": "Leaf-dab masses + per-leaf seasonal logic is the right model for 'nuance in the leaves' \u2014 the patchy staggered autumn turn is the most convincing seasonal frame yet; Acer proves per-mass colour identity. Remaining: composition reads as a bank across a lawn, not enclosing (big trees need to arch overhead/fill top; empty sky+ground); branches faint; daytime canopy now lives apart from the Nocturne ground garden \u2014 they must merge into one scene.",
+   "artifacts": [
+    "../trial-09-canopy-day.html"
+   ],
+   "captures": [
+    "captures/step09-summer.png",
+    "captures/step09-autumn-turn.png",
+    "captures/step09-spring-blossom.png"
+   ]
+  },
+  {
+   "id": "10-merge",
+   "date": "2026-06-06",
+   "title": "The Merge (daytime master)",
+   "kind": "build",
+   "tool": "Three.js: canopy leaf-dabs + recursive brown branches + 07d floor strokes + dapple + pollinators + petals, one daytime scene",
+   "question": "User: daytime is master; organic brown trunks; merge the three (canopy framing first); richer autumn esp. maples.",
+   "decision": "ONE daytime scene merging canopy(09)+floor(07d)+layers(08). Enclosing framing (overhead+side canopy masses, camera low looking up). Recursive 3D brown branch generator (trunk->sub-branches, tapered, woody) as camera-billboard thick-lines. Maple autumn: per-leaf base+MID+LATE colour stops, staggered green->gold->red, maple gold->scarlet vs others yellow->amber. Floor strokes (daytime greens, dappled) + pollinators + blossom/leaf-fall.",
+   "learned": "The convergence works \u2014 first time it reads as the WHOLE garden, daylight, alive through the year. Recursive brown branches + maple gold->scarlet are the asks landed; autumn-maples is the best frame yet. Remaining: empty mid-ground band between canopy and floor (needs bridging shrubs/climbers); floor plants stay green in autumn (should turn/decline); canopy masses ball-like, trunk lone.",
+   "artifacts": [
+    "../trial-10-merge.html"
+   ],
+   "captures": [
+    "captures/step10-summer.png",
+    "captures/step10-autumn-maples.png",
+    "captures/step10-spring.png"
+   ]
+  },
+  {
+   "id": "11-beds",
+   "date": "2026-06-06",
+   "title": "Beds, Path & Flies (ground structure)",
+   "kind": "build",
+   "tool": "Three.js: ground-zone shader (lawn/earth/path/patio) + bed-constrained planting + 5-kind varied flies",
+   "question": "User: need lawn/earth/garden beds with structure + a path; more flowers; more varied flies.",
+   "decision": "Shared bedEdge(z)/pathC(z) (JS+GLSL, true world coords) carve the floor into mown lawn / earth beds (side borders) / stone path winding up the middle / front patio, each coloured + dappled. Floor strokes generated INSIDE the beds as drifts; sparse lawn grass. Richer 8-colour flower palette across the season, brighter tips. Five fly kinds (bumblebee/honeybee/hoverfly/2 butterflies) with distinct size/colour/speed/motion-mode, ~240.",
+   "learned": "Ground structure is what makes it read as a DESIGNED garden, not plants on a plane \u2014 path leads the eye in, beds home the planting, lawn/earth/stone read distinctly; varied flies add life cheaply. Remaining: floor plants stay green in autumn (unify seasonal clock); path wide/straight; flies could be denser.",
+   "artifacts": [
+    "../trial-11-beds.html"
+   ],
+   "captures": [
+    "captures/step11-summer.png",
+    "captures/step11-flowers.png",
+    "captures/step11-autumn.png"
+   ]
+  },
+  {
+   "id": "12-plants",
+   "date": "2026-06-06",
+   "title": "A Real Plant Palette (+ unified seasonal clock)",
+   "kind": "build",
+   "tool": "Three.js: ~23-species plant library with per-plant lifecycle in the floor shader",
+   "question": "User: unify the seasonal clock; too many grasses (not a London cottage garden); use the plant list, more realistic replicants.",
+   "decision": "Replaced generic archetypes with a library of ~23 named London cottage/woodland species (hellebore, brunnera, pulmonaria, epimedium, heuchera[purple], bergenia, fern, solomon's seal, ajuga, foxglove, verbascum, veronicastrum, ammi, agapanthus, nepeta, allium, geranium, hydrangea, lobelia, snowdrop, crocus, daffodil, grass[rare]). Each carries shape/foliage/flower/height + wake/sleep/evergreen/autumn-foliage. Per-plant lifecycle in the shader unifies the clock: plants wake in season, brown to autumn colour, die back (unless evergreen); bulbs pulse. Two new shapes (fern frond, flat umbel); packed scalars into vec4 for the 16-attribute GPU limit; drifts of one species; grass weighted down.",
+   "learned": "Per-plant lifecycle turns a season CURVE into a garden YEAR: spring bulbs -> flowering border -> autumn die-back IN SYNC with the canopy -> winter bare-bones + evergreen structure + snowdrops. Named palette + distinctive foliage (purple heuchera, big bergenia, ferns) reads as a real London border. Winter showcases the recursive brown branches. Strongest the piece has been. Remaining: flower FORMS still approximate (coloured tip masks, no true foxglove-spike/allium-globe geometry); bulbs/accents could be denser; path wide.",
+   "artifacts": [
+    "../trial-12-plants.html"
+   ],
+   "captures": [
+    "captures/step12-summer.png",
+    "captures/step12-autumn.png",
+    "captures/step12-winter.png"
+   ]
+  },
+  {
+   "id": "13-flowerforms",
+   "date": "2026-06-06",
+   "title": "Flower Forms & Full Beds",
+   "kind": "build",
+   "tool": "Three.js: per-species floret generator (~16-30k flower-dab instances) + denser planting",
+   "question": "User: real flower forms + fill the beds in.",
+   "decision": "Replaced colour tip-masks with a FLORET system: per-species FORMS map drives emitFlorets() laying flower dabs in shape \u2014 spike (foxglove/verbascum), globe (allium/agapanthus), umbel (ammi), mophead (hydrangea), head (geranium/hellebore), haze (nepeta/brunnera), bell (solomon's seal), single (bulbs), plume (grass). Florets are instanced billboards fading on each plant's bloom window with a bright centre; foliage strokes now pure green. Filled beds: drifts 170->300, wider borders, FMAX 17k->24k.",
+   "learned": "Flower FORM is a big realism jump \u2014 foxglove reads as a spike of bells, allium as a globe, not a smear; form clusters fade per plant's bloom window so borders change shape through the season; denser drifts look gardened not sparse. Unified clock survived (florets seasonal, beds brown with canopy). Remaining: floral ABUNDANCE could go higher; florets are dabs not petal geometry; path wide.",
+   "artifacts": [
+    "../trial-13-flowerforms.html"
+   ],
+   "captures": [
+    "captures/step13-summer.png",
+    "captures/step13-flowers.png",
+    "captures/step13-autumn.png"
+   ]
+  },
+  {
+   "id": "21-review-enclosure",
+   "date": "2026-06-10",
+   "title": "Step 21 \u00b7 Fresh-eyes review: enclosure, festoon scale, painterly floor",
+   "kind": "build",
+   "question": "Three days on, what breaks the illusion first?",
+   "decision": "Side fences + dark fbm-clipped hedge body (enclosure = identity); festoon shrunk and draped against foliage; ragged-edge + fbm veining on floor strokes; nearDamp() kills foreground giants; captions/windfall/dusk-insects honesty fixes; pixel ratio 1.35 + lighter bloom = 25->38 fps.",
+   "learned": "Enclosure turns a demo into a garden. Scale outliers near the camera or against the sky break the illusion before anything else. Four small honesty fixes beat a new feature.",
+   "artifacts": [
+    "trial-13-flowerforms.html (re-published)"
+   ],
+   "captures": [
+    "step21-winter-enclosure.png",
+    "step21-dusk-festoon.png",
+    "step21-maple-blazes.png"
+   ]
+  }
+ ],
+ "openThreads": [
+  "Floral ABUNDANCE \u2014 more florets / more of the bed flowering at once; florets are billboard dabs not true petal geometry",
+  "Bridge the empty MID-GROUND band between canopy-bottom and the low floor (continuous shrubs/climbers \u2014 the photo has no gap)",
+  "Soften path (stepping-stones not a wide strip); denser flies; even more continuous bed colour",
+  "Refine canopy: masses less ball-like; trunk less lone / branches connect into crown; denser foliage",
+  "Build per MODEL.md: ZONES A-D; named woodland-floor species; BULB pulses; HUMAN-trace layer (watering can, cat, patio lights)",
+  "TRIAL 07 (synthesis): drive the planting from the Trial 05 substrate \u2014 species density field decides WHICH ARCHETYPE grows WHERE \u2014 so the brush-stroke garden is genuinely ecological (emergent competition/succession), not a season curve",
+  "Make the engine data-driven: load Layer-1 JSON species instead of hardcoded (unlocks Trial 02, the non-garden dataset)",
+  "Upgrade render: Kawase bloom pyramid (80-tap brute force won't scale to 4K/LED)",
+  "Decide installation framing: aspect, loop length, idle vs interactive, LED/Art-Net output"
+ ]
 }

@@ -38,7 +38,7 @@ const renderer=new THREE.WebGLRenderer({antialias:true});
 // device quality scaling — fewer instances + lower pixel ratio on phones so it runs smooth
 const MOBILE = Math.min(innerWidth,innerHeight)<620 || /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
 const Q = MOBILE ? 0.5 : 1.0;
-renderer.setPixelRatio(Math.min(devicePixelRatio, MOBILE?1.2:1.6));
+renderer.setPixelRatio(Math.min(devicePixelRatio, MOBILE?1.2:1.35));
 renderer.setSize(innerWidth,innerHeight);
 document.body.appendChild(renderer.domElement);
 
@@ -153,13 +153,49 @@ const water=new THREE.Mesh(new THREE.CircleGeometry(0.42,22),new THREE.ShaderMat
 water.rotation.x=-Math.PI/2; water.position.y=1.10; bb.add(water);
 bb.position.set(BATH[0],0,BATH[1]); bb.scale.setScalar(1.4); scene.add(bb);
 
+// ── ENCLOSURE — side fences + a body behind the hedge (the garden is walled in, not floating) ─
+const fenceMat=new THREE.ShaderMaterial({side:THREE.DoubleSide,
+  uniforms:{fogColor:{value:FOG.clone()},fogNear:{value:9.0},fogFar:{value:95.0}},
+  vertexShader:`varying vec3 vWorld; varying float vFog;
+    void main(){ vec4 wp=modelMatrix*vec4(position,1.0); vWorld=wp.xyz;
+      vec4 mv=modelViewMatrix*vec4(position,1.0); vFog=-mv.z; gl_Position=projectionMatrix*mv; }`,
+  fragmentShader:`precision highp float; varying vec3 vWorld; varying float vFog;
+    uniform vec3 fogColor; uniform float fogNear,fogFar;
+${NOISE}
+    void main(){ vec3 c=vec3(0.23,0.185,0.14)*(0.75+0.5*fbm(vWorld.zy*vec2(0.8,2.2)));  // weathered larch
+      float slat=fract(vWorld.z/0.46); float edge=min(slat,1.0-slat);
+      c*=0.62+0.38*smoothstep(0.015,0.07,edge);                                          // board gaps
+      c=mix(c,fogColor,smoothstep(fogNear,fogFar,vFog)); gl_FragColor=vec4(c,1.0); }`});
+for(const sx of [-1,1]){
+  const f=new THREE.Mesh(new THREE.PlaneGeometry(34,1.75),fenceMat);
+  f.rotation.y=sx>0?-Math.PI/2:Math.PI/2; f.position.set(sx*9.8,0.875,-11.5); scene.add(f);
+}
+// dark green mass behind the back hedge so its leaf-dabs read as a clipped surface
+// (without it the hedge floats as a detached cloud once the trees in front go bare)
+const hedgeBody=new THREE.Mesh(new THREE.PlaneGeometry(40,9.6),new THREE.ShaderMaterial({
+  uniforms:{fogColor:{value:FOG.clone()},fogNear:{value:9.0},fogFar:{value:95.0}},
+  vertexShader:`varying vec3 vWorld; varying float vFog;
+    void main(){ vec4 wp=modelMatrix*vec4(position,1.0); vWorld=wp.xyz;
+      vec4 mv=modelViewMatrix*vec4(position,1.0); vFog=-mv.z; gl_Position=projectionMatrix*mv; }`,
+  fragmentShader:`precision highp float; varying vec3 vWorld; varying float vFog;
+    uniform vec3 fogColor; uniform float fogNear,fogFar;
+${NOISE}
+    void main(){
+      float top=7.4+1.6*fbm(vec2(vWorld.x*0.4,3.7));                  // irregular clipped top, not a hard rectangle
+      float side=19.0-1.2*fbm(vec2(vWorld.y*0.6,vWorld.x*0.1));
+      if(vWorld.y>top||abs(vWorld.x)>side) discard;
+      vec3 c=vec3(0.035,0.085,0.04)*(0.55+0.7*fbm(vWorld.xy*1.3));
+      c=mix(c,fogColor,smoothstep(fogNear,fogFar,vFog)*0.55);          // resist the fog wash — it must stay darker than the dabs
+      gl_FragColor=vec4(c,1.0); }`}));
+hedgeBody.position.set(0,4.6,-27.8); scene.add(hedgeBody);
+
 // ── CANOPY leaf-dabs (enclosing) + maple autumn ─────────────────────
 // each leaf: base green + autumn MID + autumn LATE stops (progression green→mid→late)
 const MASSES=[
   // each tree: its own autumn TONE (mid→late) and its own TIMING (at = how late it turns)
   {c:[8.7,7.0,-12],r:[7,4.7,4.7],n:9000, g:[0.10,0.26,0.10], mid:[0.90,0.68,0.18], late:[0.82,0.55,0.14], tree:1, at:0.10}, // R tree — GOLD, early
   {c:[-10,6.6,-13],r:[7,4.7,4.7],n:8500, g:[0.10,0.27,0.10], mid:[0.92,0.56,0.14], late:[0.80,0.36,0.10], tree:1, at:0.45}, // L tree — ORANGE, late
-  {c:[0,5.6,-27],  r:[20,6,7],  n:8000, g:[0.09,0.23,0.10], mid:[0.09,0.23,0.10], late:[0.09,0.23,0.10], ever:1},          // back wall — EVERGREEN hedge
+  {c:[0,4.8,-27],  r:[15,4.4,7],n:8000, g:[0.09,0.23,0.10], mid:[0.09,0.23,0.10], late:[0.09,0.23,0.10], ever:1},          // back wall — EVERGREEN hedge (dabs kept inside the hedge body plane)
   {c:[-1.5,3.8,-9],r:[4.3,3.4,3.4],n:13000,g:[0.11,0.30,0.12], mid:[0.86,0.62,0.16], late:[0.72,0.40,0.14], tree:1, apple:1, at:0.28}, // APPLE — russet, bigger
   {c:[-6.3,2.9,-9.5],r:[2.5,2.3,1.9],n:4500,g:[0.50,0.60,0.12], mid:[0.95,0.52,0.10], late:[0.86,0.13,0.06], maple:1, tree:1, at:0.60}, // MAPLE — SCARLET, latest
   {c:[6.4,3.2,-9.5],r:[2.6,2.3,2.2],n:4000, g:[0.13,0.31,0.12], mid:[0.82,0.46,0.14], late:[0.70,0.26,0.12], tree:1, cherry:1, at:0.32}, // CHERRY — warm red
@@ -376,8 +412,10 @@ const LIB=[
  P({n:'grass',      sh:0,d:[.08,.18,.07],l:[.24,.46,.18],fc:[.80,.75,.50],win:[210,240,290],h:[.50,1.0],w:[.04,.07],bnd:.4,cnt:[6,10],spr:.18,fa:.2,wk:60,sl:300,ev:0,au:[.70,.60,.35],wt:1}),
 ];
 const S=[]; const FSTR=29;
+// plants right by the camera loomed as giant dark blades at the frame edges — damp their height as z approaches the patio
+function nearDamp(z){return 1-0.5*Math.min(1,Math.max(0,(z-2.5)/1.9));}
 function fpush(x,z,w,h,bend,shade,flower,deep,lit,fc,win,shape,wk,sl,ev,au){
-  S.push(x,0,z,w,h,bend,R(),0,shade,flower, deep[0],deep[1],deep[2], lit[0],lit[1],lit[2],
+  S.push(x,0,z,w,h*nearDamp(z),bend,R(),0,shade,flower, deep[0],deep[1],deep[2], lit[0],lit[1],lit[2],
     fc[0],fc[1],fc[2], win[0],win[1],win[2], shape, wk,sl,ev, au[0],au[1],au[2]);}
 
 // ── FLOWER FORM per species → florets (clusters of flower dabs) ─────
@@ -389,7 +427,7 @@ const FL=[]; const FLSTR=11;                            // x,y,z,size, r,g,b, ws
 function fl(x,y,z,size,fc,win){ FL.push(x,y,z,size, fc[0],fc[1],fc[2], win[0],win[1],win[2], R()); }
 function emitFlorets(cx,cz,sp){
   const form=FORMS[sp.n]; if(!form||form==='none'||sp.fa<=0) return;
-  const H=sp.h[1], fc=sp.fc, win=sp.win;
+  const H=sp.h[1]*nearDamp(cz), fc=sp.fc, win=sp.win;   // florets track the damped foliage height
   if(form==='spike'){ const n=20+(R()*16|0); for(let i=0;i<n;i++){const t=0.42+0.58*i/n,a=i*2.4+R()*6.28,r=0.03+0.025*R();
     fl(cx+Math.cos(a)*r, H*t, cz+Math.sin(a)*r, 0.06+0.035*R(), fc,win);} }
   else if(form==='globe'){ const n=40+(R()*28|0),rad=0.11+0.06*R(); for(let i=0;i<n;i++){
@@ -522,8 +560,11 @@ ${DAPPLE}
       else if(Sh==6){ float feather=0.5+0.5*sin(y*40.0+vSeed*12.0); hw=(0.06+0.34*(1.0-y))*feather; } // fern frond
       else if(Sh==7){ float st=step(y,0.82)*0.05; float disc=smoothstep(0.80,0.85,y)*(1.0-smoothstep(0.93,0.99,y)); hw=max(st,disc*0.95); } // flat umbel
       else hw=1.0-smoothstep(0.12,1.0,y);                            // blade
-      float ax=abs(vUv.x-0.5)*2.0; float soft=smoothstep(hw,max(0.0,hw-0.2),ax); if(soft<0.01||hw<0.006)discard;
+      float rag=0.90+0.07*sin(y*23.0+vSeed*41.0)+0.05*sin(y*6.0+vSeed*17.0); // ragged organic edge — kills the clean vector silhouette
+      float ax=abs(vUv.x-0.5)*2.0; float soft=smoothstep(hw*rag,max(0.0,hw*rag-0.26),ax); if(soft<0.01||hw<0.006)discard;
       vec3 green=mix(vDeep,vLit,smoothstep(0.0,1.0,y))*vShade;
+      float vein=fbm(vec2(vUv.x*4.0+vSeed*23.0, y*6.0));               // painterly interior, matches the leaf-dab language above
+      green*=0.82+0.36*vein;
       green=mix(green, green*vec3(1.12,1.22,0.82), vFresh*0.6);      // fresh pale-green spring flush
       green=mix(green,vAut,vBrown*0.85);                             // foliage browns in autumn
       float dp=dapple(vWXZ,time); green*=mix(1.0-0.35*dap,1.0+0.5*dap,dp);
@@ -596,7 +637,7 @@ const fruitMat=new THREE.ShaderMaterial({transparent:true,depthTest:true,depthWr
         pres=grow*(1.0-drop); vRipe=sm(210.0,272.0,day); sc=iSize*(0.45+0.55*grow);
         world=iC+camRight*(q.x*sc)+camUp*((q.y-0.4)*sc);             // hang below the twig
       } else {                                                       // windfall on the grass
-        pres=sm(300.0,322.0,day)*(1.0-sm(356.0,366.0,day)); vRipe=1.0; sc=iSize;
+        pres=sm(300.0,322.0,day)*(1.0-sm(336.0+iSeed*10.0,352.0,day)); vRipe=1.0; sc=iSize;  // cleared/rotted by early winter
         world=iC+camRight*(q.x*sc)+camUp*(q.y*sc*0.7);               // lying on the ground
       }
       if(pres<0.02){ gl_Position=vec4(2.0,2.0,2.0,1.0); return; }
@@ -691,10 +732,10 @@ const birdMat=new THREE.ShaderMaterial({transparent:true,depthTest:true,depthWri
 const birds=new THREE.Mesh(birdGeo,birdMat); birds.frustumCulled=false; scene.add(birds);
 
 // ── PATIO STRING LIGHTS — warm bulbs strung over the patio, on at dusk ─
-const NL2=18;
+const NL2=14;
 const lpos=new Float32Array(NL2*3), lsd=new Float32Array(NL2);
 for(let i=0;i<NL2;i++){ const t=i/(NL2-1);
-  lpos[i*3]=THREE.MathUtils.lerp(-3.0,3.0,t); lpos[i*3+1]=2.6-0.55*Math.sin(t*Math.PI); lpos[i*3+2]=4.2; lsd[i]=R(); }
+  lpos[i*3]=THREE.MathUtils.lerp(-1.8,1.8,t); lpos[i*3+1]=2.02-0.40*Math.sin(t*Math.PI); lpos[i*3+2]=5.0; lsd[i]=R(); } // short + low: every bulb reads against foliage, not sky
 const lgeo2=new THREE.BufferGeometry();
 lgeo2.setAttribute('position',new THREE.BufferAttribute(lpos,3)); lgeo2.setAttribute('sd',new THREE.BufferAttribute(lsd,1));
 const lightMat=new THREE.ShaderMaterial({transparent:true,depthTest:true,depthWrite:false,blending:THREE.AdditiveBlending,
@@ -702,13 +743,13 @@ const lightMat=new THREE.ShaderMaterial({transparent:true,depthTest:true,depthWr
   vertexShader:`attribute float sd; uniform float sun,time,dpr; varying float vG,vS;
     void main(){ vS=sd; vG=1.0-smoothstep(0.42,0.82,sun);            // come on as the light fades
       vec4 mv=viewMatrix*vec4(position,1.0);
-      gl_Position=projectionMatrix*mv; gl_PointSize=(7.0+12.0*vG)*dpr*(8.0/max(0.5,-mv.z)); }`,
+      gl_Position=projectionMatrix*mv; gl_PointSize=(3.2+4.6*vG)*dpr*(8.0/max(0.5,-mv.z)); }`,
   fragmentShader:`precision highp float; varying float vG,vS; uniform float time;
     void main(){ vec2 d=gl_PointCoord-0.5; float r=length(d); if(r>0.5) discard;
       float core=exp(-r*r*18.0), halo=exp(-r*r*4.0);
       float tw=0.85+0.15*sin(time*3.0+vS*30.0);                       // gentle twinkle
-      float a=(core+halo*0.5)*vG*tw;
-      vec3 c=vec3(1.0,0.74,0.40)*(1.6+2.0*vG);                        // warm bulb
+      float a=(core+halo*0.35)*vG*tw;
+      vec3 c=vec3(1.0,0.74,0.40)*(1.15+1.0*vG);                       // warm bulb
       gl_FragColor=vec4(c*a,a); }`});
 const patioLights=new THREE.Points(lgeo2,lightMat); patioLights.frustumCulled=false; scene.add(patioLights);
 
@@ -794,7 +835,7 @@ const presentMat=new THREE.ShaderMaterial({uniforms:postU,
   fragmentShader:`precision highp float; varying vec2 vUv; uniform sampler2D src; uniform vec2 res; uniform float bloom,sun;
     vec3 aces(vec3 x){return clamp((x*(2.51*x+0.03))/(x*(2.43*x+0.59)+0.14),0.,1.);}
     void main(){ vec3 base=texture2D(src,vUv).rgb; vec3 b=vec3(0.); float tot=0.;
-      for(int i=1;i<=6;i++){float fr=float(i); float rad=fr/res.y; float w=1.0/(fr*fr);
+      for(int i=1;i<=4;i++){float fr=float(i); float rad=fr/res.y; float w=1.0/(fr*fr);
         for(int k=0;k<6;k++){float a=float(k)/6.*6.2831; b+=texture2D(src,vUv+vec2(cos(a),sin(a))*rad).rgb*w; tot+=w;}}
       b/=tot; b=max(b-0.62,0.0);
       vec3 col=base+b*bloom*(1.0+(1.0-sun)*1.6);                     // lights bloom more at dusk
@@ -813,8 +854,8 @@ function seasonName(d){for(let i=0;i<4;i++)if(d>=SEASONS[i].t&&d<SEASONS[i+1].t)
 function smooth(a,b,x){x=Math.min(1,Math.max(0,(x-a)/(b-a)));return x*x*(3-2*x);}
 function growthOf(d){return smooth(40,150,d)*(1-smooth(250,345,d));}
 const EVENTS=[[40,'bare branches'],[78,'blossom breaks'],[110,'leaf-out · woodland floor wakes'],
-  [150,'in full leaf'],[185,'high summer · the garden hums'],[250,'first turn'],[285,'maples blaze'],
-  [305,'leaf fall'],[338,'bare again']];
+  [150,'in full leaf'],[185,'high summer · the garden hums'],[250,'first turn'],[285,'golds deepen'],
+  [305,'leaf fall'],[322,'the maple blazes'],[340,'bare again']];
 function currentEvent(d){let e='';for(const[t,n]of EVENTS){if(d>=t)e=n;}return e;}
 const _r=new THREE.Vector3(),_u=new THREE.Vector3();
 let last=null;
@@ -842,7 +883,7 @@ function frame(t){
   groundU.dap.value=0.2+0.6*leafOn; floorMat.uniforms.dap.value=0.2+0.6*leafOn;
   blossomFall.uniforms.time.value=tm; blossomFall.uniforms.amt.value=smooth(80,96,day)*(1-smooth(108,124,day));
   leafFall.uniforms.time.value=tm; leafFall.uniforms.amt.value=smooth(292,315,day)*(1-smooth(336,358,day));
-  fliesMat.uniforms.time.value=tm; fliesMat.uniforms.amt.value=smooth(118,150,day)*(1-smooth(252,292,day));
+  fliesMat.uniforms.time.value=tm; fliesMat.uniforms.amt.value=smooth(118,150,day)*(1-smooth(252,292,day))*(0.06+0.94*smooth(0.35,0.62,sun)); // pollinators head home at dusk
   renderer.setRenderTarget(sceneRT); renderer.render(scene,cam);
   postU.src.value=sceneRT.texture; postQuad.material=presentMat;
   renderer.setRenderTarget(null); renderer.render(post,postCam);
