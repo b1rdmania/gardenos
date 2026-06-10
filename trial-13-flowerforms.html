@@ -170,6 +170,9 @@ for(const sx of [-1,1]){
   const f=new THREE.Mesh(new THREE.PlaneGeometry(34,1.75),fenceMat);
   f.rotation.y=sx>0?-Math.PI/2:Math.PI/2; f.position.set(sx*9.8,0.875,-11.5); scene.add(f);
 }
+// climbing roses clothe the fences — anchor points here, foliage + blooms emitted by the instanced systems
+const CLIMBERS=[];
+for(const side of [-1,1]) for(let k=0;k<3;k++) CLIMBERS.push({sx:side*9.55, cz:-3.5-k*7.5+R()*3});
 // dark green mass behind the back hedge so its leaf-dabs read as a clipped surface
 // (without it the hedge floats as a detached cloud once the trees in front go bare)
 const hedgeBody=new THREE.Mesh(new THREE.PlaneGeometry(40,9.6),new THREE.ShaderMaterial({
@@ -287,6 +290,16 @@ for(const m of MASSES){
   else if(m.tree){ growTree(m,mn); }
   else { for(let i=0;i<mn;i++) leafAt(m.c[0]+gauss()*m.r[0], m.c[1]+gauss()*m.r[1], m.c[2]+gauss()*m.r[2], m); }
 }
+// climbing-rose foliage — fine leaf dabs massed against the fence panels
+const CLG={g:[0.10,0.26,0.11], mid:[0.55,0.40,0.16], late:[0.45,0.28,0.12]};
+for(const cl of CLIMBERS){
+  const n=(520*Q)|0;
+  for(let i=0;i<n;i++){
+    const z=cl.cz+gauss()*2.4, y=0.35+Math.abs(gauss())*1.15;
+    if(y>1.95) continue;
+    pushLeaf(cl.sx+(R()-0.5)*0.3, y, z, 0.16+0.16*R(), CLG.g, CLG.mid, CLG.late, Math.min(0.98,0.3+R()*0.3), 0, 0.5+0.5*R(), 1, 0);
+  }
+}
 const NL=LC.length/LSTR, larr=Float32Array.from(LC);
 function ls(o,s){const a=new Float32Array(NL*s);for(let i=0;i<NL;i++)for(let j=0;j<s;j++)a[i*s+j]=larr[i*LSTR+o+j];return a;}
 const leafQ=new THREE.PlaneGeometry(1,1);
@@ -316,7 +329,7 @@ ${WIND}
       bool ev = iEver>0.5;
       float leafOut = ev ? 1.0 : sm(58.0+iSeed*54.0, 108.0+iSeed*54.0, day); // evergreen always in leaf
       float fall = ev ? 0.0 : sm(294.0+iTurn*34.0,336.0+iTurn*20.0,day);      // evergreen never drops
-      float blf=step(0.5,iBloss)*sm(50.0,72.0,day)*(1.0-sm(84.0,108.0,day)); // blossom before the leaves
+      float blf=step(0.5,iBloss)*step(fract(iSeed*7.31),0.45)*sm(50.0,72.0,day)*(1.0-sm(84.0,108.0,day)); // blossom before the leaves — porous, not a solid ball
       float scale=max(leafOut*(1.0-fall), blf);                         // blossom fills the tree first
       float turn = ev ? 0.0 : sm(262.0+iTurn*52.0,294.0+iTurn*52.0,day);     // evergreen never turns
       vec3 aut = turn<0.5 ? mix(iG,iMid,turn*2.0) : mix(iMid,iLate,(turn-0.5)*2.0);
@@ -325,7 +338,7 @@ ${WIND}
       col=mix(col, blossCol, blf);
       col=mix(col*vec3(1.15,1.18,0.9), col, smoothstep(0.2,0.9,leafOut)); // fresh pale flush → deepens
       col*=iShade; vCol=col; vKill=scale;
-      float sc=iSize*(0.05+0.95*scale)*(1.0+blf*0.25);                   // grow from a tiny bud
+      float sc=iSize*(0.05+0.95*scale)*(1.0+blf*0.1);                    // grow from a tiny bud
       vec2 q=uv-0.5;
       float hf=clamp((iCenter.y-0.5)/8.0,0.0,1.0);                       // higher leaves sway more
       vec3 world=iCenter+windOffset(iCenter,time,0.028+0.045*hf)+camRight*(q.x*sc)+camUp*(q.y*sc);
@@ -383,12 +396,12 @@ function jit(c,a){return[Math.max(0,c[0]+(R()*2-1)*a),Math.max(0,c[1]+(R()*2-1)*
 const P=(o)=>o;
 const LIB=[
  // — woodland floor (low, shade) —
- P({n:'hellebore',  sh:5,d:[.04,.13,.07],l:[.11,.26,.13],fc:[.86,.83,.78],win:[18,50,96], h:[.45,.62],w:[.18,.30],bnd:.2,cnt:[3,5],spr:.22,fa:.7, wk:0, sl:0,  ev:1,au:[.5,.36,.30],wt:3}),
+ P({n:'hellebore',  sh:5,d:[.04,.13,.07],l:[.11,.26,.13],fc:[.86,.83,.78],win:[18,50,96], h:[.45,.62],w:[.14,.22],bnd:.2,cnt:[4,7],spr:.22,fa:.7, wk:0, sl:0,  ev:1,au:[.5,.36,.30],wt:3}),
  P({n:'brunnera',   sh:1,d:[.07,.17,.11],l:[.22,.42,.28],fc:[.42,.55,1.0],win:[80,108,148],h:[.42,.60],w:[.18,.30],bnd:.6,cnt:[4,7],spr:.26,fa:.6, wk:72,sl:278,ev:0,au:[.60,.50,.22],wt:3}),
  P({n:'pulmonaria', sh:1,d:[.08,.18,.10],l:[.24,.42,.24],fc:[.72,.38,.82],win:[55,85,128], h:[.38,.55],w:[.18,.28],bnd:.7,cnt:[4,6],spr:.24,fa:.6, wk:55,sl:268,ev:0,au:[.55,.45,.20],wt:2}),
  P({n:'epimedium',  sh:1,d:[.08,.19,.09],l:[.26,.46,.20],fc:[1.0,.85,.32],win:[80,103,140],h:[.40,.55],w:[.12,.22],bnd:.8,cnt:[4,7],spr:.24,fa:.5, wk:78,sl:282,ev:0,au:[.62,.38,.16],wt:2}),
  P({n:'heuchera',   sh:1,d:[.13,.06,.11],l:[.34,.15,.27],fc:[.95,.82,.86],win:[150,180,220],h:[.40,.60],w:[.18,.30],bnd:.5,cnt:[4,7],spr:.24,fa:.35,wk:35,sl:330,ev:1,au:[.30,.12,.20],wt:3}),
- P({n:'bergenia',   sh:1,d:[.05,.16,.10],l:[.15,.34,.18],fc:[.95,.34,.55],win:[68,95,128], h:[.50,.72],w:[.30,.50],bnd:.4,cnt:[3,5],spr:.26,fa:.45,wk:0, sl:0,  ev:1,au:[.55,.30,.28],wt:2}),
+ P({n:'bergenia',   sh:1,d:[.05,.16,.10],l:[.15,.34,.18],fc:[.95,.34,.55],win:[68,95,128], h:[.42,.58],w:[.18,.28],bnd:.4,cnt:[4,7],spr:.26,fa:.45,wk:0, sl:0,  ev:1,au:[.55,.30,.28],wt:2}),
  P({n:'fern',       sh:6,d:[.06,.18,.08],l:[.18,.40,.16],fc:[0,0,0],     win:[0,1,2],     h:[.60,1.05],w:[.10,.18],bnd:.9,cnt:[4,7],spr:.22,fa:0,  wk:92,sl:276,ev:0,au:[.66,.50,.24],wt:2}),
  P({n:'solomons',   sh:2,d:[.06,.18,.10],l:[.20,.44,.20],fc:[.95,.97,.95],win:[88,114,150],h:[.65,.95],w:[.05,.09],bnd:.5,cnt:[2,3],spr:.18,fa:.6, wk:82,sl:270,ev:0,au:[.80,.70,.30],wt:2}),
  P({n:'ajuga',      sh:4,d:[.08,.16,.10],l:[.22,.40,.20],fc:[.40,.42,.92],win:[100,124,160],h:[.30,.45],w:[.10,.18],bnd:.5,cnt:[5,8],spr:.30,fa:.55,wk:60,sl:286,ev:1,au:[.40,.30,.30],wt:2}),
@@ -405,11 +418,17 @@ const LIB=[
  P({n:'hydrangea',  sh:5,d:[.06,.18,.10],l:[.16,.36,.20],fc:[.50,.55,.85],win:[182,224,292],h:[1.0,1.6],w:[.45,.70],bnd:.2,cnt:[5,9],spr:.50,fa:.7,wk:60,sl:300,ev:0,au:[.50,.32,.40],wt:3}),
  P({n:'lobelia',    sh:4,d:[.06,.16,.08],l:[.18,.40,.18],fc:[.22,.32,.96],win:[150,200,272],h:[.30,.46],w:[.06,.11],bnd:.5,cnt:[5,9],spr:.26,fa:.85,wk:95,sl:300,ev:0,au:[.40,.40,.40],wt:3}),
  // — bulbs (early pulses) —
- P({n:'snowdrop',   sh:0,d:[.10,.20,.12],l:[.30,.50,.28],fc:[.97,.98,.97],win:[8,28,58],   h:[.22,.34],w:[.03,.05],bnd:.3,cnt:[4,7],spr:.18,fa:.9,wk:5, sl:66, ev:0,au:[.5,.5,.4],wt:2}),
- P({n:'crocus',     sh:4,d:[.10,.20,.10],l:[.30,.46,.24],fc:[.70,.50,.92],win:[34,54,86],  h:[.18,.28],w:[.05,.09],bnd:.2,cnt:[5,9],spr:.20,fa:.95,wk:24,sl:94, ev:0,au:[.5,.5,.4],wt:2}),
- P({n:'daffodil',   sh:2,d:[.10,.20,.10],l:[.28,.46,.22],fc:[1.0,.85,.18],win:[52,78,110], h:[.40,.60],w:[.05,.09],bnd:.2,cnt:[2,4],spr:.16,fa:.95,wk:38,sl:128,ev:0,au:[.6,.55,.3],wt:2}),
+ P({n:'snowdrop',   sh:0,d:[.10,.20,.12],l:[.30,.50,.28],fc:[.97,.98,.97],win:[8,28,58],   h:[.22,.34],w:[.03,.05],bnd:.3,cnt:[4,7],spr:.18,fa:.9,wk:5, sl:66, ev:0,au:[.42,.52,.26],wt:2}),
+ P({n:'crocus',     sh:4,d:[.10,.20,.10],l:[.30,.46,.24],fc:[.70,.50,.92],win:[34,54,86],  h:[.18,.28],w:[.05,.09],bnd:.2,cnt:[5,9],spr:.20,fa:.95,wk:24,sl:94, ev:0,au:[.42,.52,.26],wt:2}),
+ P({n:'daffodil',   sh:2,d:[.10,.20,.10],l:[.28,.46,.22],fc:[1.0,.85,.18],win:[52,78,110], h:[.40,.60],w:[.05,.09],bnd:.2,cnt:[3,5],spr:.16,fa:.95,wk:38,sl:128,ev:0,au:[.50,.55,.26],wt:2}),
  // — grass (now rare) —
  P({n:'grass',      sh:0,d:[.08,.18,.07],l:[.24,.46,.18],fc:[.80,.75,.50],win:[210,240,290],h:[.50,1.0],w:[.04,.07],bnd:.4,cnt:[6,10],spr:.18,fa:.2,wk:60,sl:300,ev:0,au:[.70,.60,.35],wt:1}),
+ // — the cottage icons (wt:0 = placed deliberately, not in the random drift mix) —
+ P({n:'hollyhock',  sh:2,d:[.08,.18,.08],l:[.24,.44,.20],fc:[.93,.50,.62],win:[168,200,248],h:[1.8,2.8],w:[.07,.11],bnd:.10,cnt:[1,2],spr:.10,fa:1.0,wk:70,sl:262,ev:0,au:[.55,.40,.22],wt:0}),
+ P({n:'delphinium', sh:2,d:[.07,.17,.09],l:[.20,.42,.20],fc:[.25,.38,.95],win:[152,178,222],h:[1.3,2.0],w:[.06,.10],bnd:.08,cnt:[1,2],spr:.09,fa:1.0,wk:66,sl:256,ev:0,au:[.55,.45,.25],wt:3}),
+ P({n:'lupin',      sh:2,d:[.08,.20,.10],l:[.22,.46,.22],fc:[.82,.42,.78],win:[132,158,198],h:[.80,1.3],w:[.07,.11],bnd:.12,cnt:[1,3],spr:.12,fa:1.0,wk:58,sl:250,ev:0,au:[.55,.42,.22],wt:3}),
+ P({n:'lavender',   sh:4,d:[.30,.36,.28],l:[.46,.52,.42],fc:[.58,.48,.95],win:[158,198,262],h:[.40,.60],w:[.07,.12],bnd:.5,cnt:[4,6],spr:.24,fa:.9,wk:55,sl:298,ev:1,au:[.45,.45,.40],wt:0}),
+ P({n:'rose',       sh:5,d:[.07,.20,.09],l:[.18,.40,.18],fc:[.96,.55,.66],win:[148,190,268],h:[.90,1.4],w:[.40,.60],bnd:.2,cnt:[1,2],spr:.30,fa:.85,wk:55,sl:295,ev:0,au:[.50,.35,.20],wt:6}),
 ];
 const S=[]; const FSTR=29;
 // plants right by the camera loomed as giant dark blades at the frame edges — damp their height as z approaches the patio
@@ -422,30 +441,42 @@ function fpush(x,z,w,h,bend,shade,flower,deep,lit,fc,win,shape,wk,sl,ev,au){
 const FORMS={hellebore:'head',brunnera:'haze',pulmonaria:'head',epimedium:'haze',heuchera:'spike',
   bergenia:'head',fern:'none',solomons:'bell',ajuga:'spike',foxglove:'spike',verbascum:'spike',
   veronicast:'spike',ammi:'umbel',agapanthus:'globe',nepeta:'haze',allium:'globe',geranium:'head',
-  hydrangea:'mophead',lobelia:'haze',snowdrop:'single',crocus:'single',daffodil:'single',grass:'plume'};
-const FL=[]; const FLSTR=11;                            // x,y,z,size, r,g,b, ws,wp,we, seed
-function fl(x,y,z,size,fc,win){ FL.push(x,y,z,size, fc[0],fc[1],fc[2], win[0],win[1],win[2], R()); }
+  hydrangea:'mophead',lobelia:'haze',snowdrop:'snowdrop',crocus:'crocus',daffodil:'daffodil',grass:'plume',
+  hollyhock:'spike',delphinium:'spike',lupin:'spike',lavender:'spike',rose:'rosebush'};
+const FL=[]; const FLSTR=12;                            // x,y,z,size, r,g,b, ws,wp,we, seed, kind
+// kind: 0 generic 5-petal · 1 daffodil (6-petal star + trumpet) · 2 snowdrop (hanging white drop) · 3 crocus (upright cup)
+function fl(x,y,z,size,fc,win,kd){ FL.push(x,y,z,size, fc[0],fc[1],fc[2], win[0],win[1],win[2], R(), kd||0); }
+let FLP=1;                                              // floret emission probability — features 1.0, mass fillers lower (the buffer is capped)
 function emitFlorets(cx,cz,sp){
+  if(R()>FLP) return;
   const form=FORMS[sp.n]; if(!form||form==='none'||sp.fa<=0) return;
   const H=sp.h[1]*nearDamp(cz), fc=sp.fc, win=sp.win;   // florets track the damped foliage height
   if(form==='spike'){ const n=20+(R()*16|0); for(let i=0;i<n;i++){const t=0.42+0.58*i/n,a=i*2.4+R()*6.28,r=0.03+0.025*R();
     fl(cx+Math.cos(a)*r, H*t, cz+Math.sin(a)*r, 0.06+0.035*R(), fc,win);} }
-  else if(form==='globe'){ const n=40+(R()*28|0),rad=0.11+0.06*R(); for(let i=0;i<n;i++){
+  else if(form==='globe'){ const n=26+(R()*16|0),rad=0.11+0.06*R(); for(let i=0;i<n;i++){
     let dx=gauss(),dy=gauss(),dz=gauss(); const m=Math.hypot(dx,dy,dz)||1; dx/=m;dy/=m;dz/=m;
     fl(cx+dx*rad, H+dy*rad, cz+dz*rad, 0.055+0.025*R(), fc,win);} }
-  else if(form==='umbel'){ const n=30+(R()*22|0),yy=H*0.96; for(let i=0;i<n;i++){const a=R()*6.28,r=R()*0.20;
+  else if(form==='umbel'){ const n=18+(R()*14|0),yy=H*0.96; for(let i=0;i<n;i++){const a=R()*6.28,r=R()*0.20;
     fl(cx+Math.cos(a)*r, yy+gauss()*0.02, cz+Math.sin(a)*r, 0.04+0.025*R(), fc,win);} }
   else if(form==='head'){ const n=5+(R()*7|0); for(let i=0;i<n;i++){const a=R()*6.28,r=R()*0.10;
     fl(cx+Math.cos(a)*r, H*0.85+gauss()*0.06, cz+Math.sin(a)*r, 0.08+0.05*R(), fc,win);} }
   else if(form==='mophead'){ const heads=3+(R()*3|0); for(let h=0;h<heads;h++){const hx=cx+gauss()*0.28,hz=cz+gauss()*0.22,hy=H*(0.6+0.3*R());
-    const n=24+(R()*18|0); for(let i=0;i<n;i++){let dx=gauss(),dy=gauss(),dz=gauss();const m=Math.hypot(dx,dy,dz)||1;
+    const n=14+(R()*10|0); for(let i=0;i<n;i++){let dx=gauss(),dy=gauss(),dz=gauss();const m=Math.hypot(dx,dy,dz)||1;
       fl(hx+dx/m*0.16, hy+dy/m*0.14, hz+dz/m*0.16, 0.055+0.025*R(), fc,win);} } }
-  else if(form==='haze'){ const n=28+(R()*22|0); for(let i=0;i<n;i++){
+  else if(form==='haze'){ const n=16+(R()*12|0); for(let i=0;i<n;i++){
     fl(cx+gauss()*sp.w[1]*1.7, H*(0.45+0.55*R()), cz+gauss()*sp.w[1]*1.7, 0.035+0.025*R(), fc,win);} }
   else if(form==='bell'){ const n=8+(R()*7|0); for(let i=0;i<n;i++){const t=i/n;
     fl(cx+(t-0.5)*0.34, H*(0.55+0.4*(1.0-t))-0.04, cz+gauss()*0.05, 0.055+0.025*R(), fc,win);} }
   else if(form==='single'){ const n=2+(R()*3|0); for(let i=0;i<n;i++){
     fl(cx+gauss()*0.06, H*0.84, cz+gauss()*0.06, 0.10+0.05*R(), fc,win);} }
+  else if(form==='daffodil'){ const n=2+(R()*2|0); for(let i=0;i<n;i++){      // big nodding stars on tall stems
+    fl(cx+gauss()*0.07, H*(0.82+0.12*R()), cz+gauss()*0.07, 0.12+0.05*R(), fc,win,1);} }
+  else if(form==='snowdrop'){ const n=2+(R()*3|0); for(let i=0;i<n;i++){      // small hanging drops
+    fl(cx+gauss()*0.06, H*(0.62+0.18*R()), cz+gauss()*0.06, 0.07+0.03*R(), fc,win,2);} }
+  else if(form==='crocus'){ const n=2+(R()*3|0); for(let i=0;i<n;i++){        // upright cups close to the ground
+    fl(cx+gauss()*0.05, H*(0.72+0.2*R()), cz+gauss()*0.05, 0.09+0.04*R(), fc,win,3);} }
+  else if(form==='rosebush'){ const n=7+(R()*6|0); for(let i=0;i<n;i++){      // blooms scattered over the whole shrub
+    fl(cx+gauss()*0.30, H*(0.45+0.55*R()), cz+gauss()*0.26, 0.10+0.06*R(), fc,win);} }
   else if(form==='plume'){ const n=6+(R()*5|0); for(let i=0;i<n;i++){
     fl(cx+gauss()*0.04, H*(0.86+0.14*R()), cz+gauss()*0.04, 0.06, fc,win);} }
 }
@@ -466,17 +497,35 @@ function emitSpecies(cx,cz,sp){
 const TOTW=LIB.reduce((a,s)=>a+s.wt,0);
 function pickSpecies(){let r=R()*TOTW; for(const s of LIB){r-=s.wt; if(r<=0)return s;} return LIB[0];}
 const FMAX=36000*Q|0;
-// plant drifts INTO the side beds — one species per drift (gardener's repetition), packed full
-for(let b=0;b<380 && S.length/FSTR<FMAX;b++){
-  const z=THREE.MathUtils.lerp(4.2,-13.5,Math.pow(R(),0.5));
-  const side=R()<0.5?-1:1, be=bedEdgeJS(z);
-  const cx=side*(be+0.2+R()*4.8), rad=THREE.MathUtils.lerp(0.45,1.4,R());
-  const sp=pickSpecies(), drift=3+(R()*7|0);
+FLP=1.0;                                               // deliberate features flower fully — emitted first so the cap never cuts them
+// naturalised SPRING BULBS — generous drifts of daffodils & snowdrops sweeping through the lawn
+const SNOW=LIB.find(s=>s.n==='snowdrop'), DAFF=LIB.find(s=>s.n==='daffodil'), CROC=LIB.find(s=>s.n==='crocus');
+for(let b=0;b<170 && S.length/FSTR<FMAX;b++){
+  const z=THREE.MathUtils.lerp(4.0,-12,Math.pow(R(),0.55));
+  const x=(R()*2-1)*bedEdgeJS(z)*1.05;
+  const sp=R()<0.5?DAFF:(R()<0.72?SNOW:CROC);            // daffodil-led, snowdrops + some crocus
+  const drift=6+(R()*9|0), rad=0.35+R()*0.7;
   for(let p=0;p<drift && S.length/FSTR<FMAX;p++){
-    const px=cx+gauss()*rad, pz=z+gauss()*rad;
-    if(inBed(px,pz)) emitSpecies(px,pz,sp);
+    const px=x+gauss()*rad, pz=z+gauss()*rad;
+    if(Math.abs(px-pathCJS(pz))>1.0 && Math.abs(px)<bedEdgeJS(pz)+1.2 && pz<4.2 && !nearBath(px,pz)) emitSpecies(px,pz,sp); // lawn + the visible front strip of the beds
   }
 }
+// HOLLYHOCKS stand against the fence lines; LAVENDER edges the path — the deliberate cottage moves
+const HOLLY=LIB.find(s=>s.n==='hollyhock'), LAV=LIB.find(s=>s.n==='lavender');
+for(let i=0;i<26;i++){ const z=THREE.MathUtils.lerp(3.2,-23,R()), side=R()<0.5?-1:1;
+  emitSpecies(side*(8.9+R()*0.4), z, HOLLY); }
+for(let i=0;i<30;i++){ const z=THREE.MathUtils.lerp(4.0,-13,i/29)+(R()-0.5)*0.3, side=i%2?-1:1;
+  const px=pathCJS(z)+side*(1.04+R()*0.18);
+  if(!nearBath(px,z)) emitSpecies(px, z, LAV); }
+// CLIMBING-ROSE blooms stud the fence climbers through summer (foliage dabs added with the canopy build)
+for(const cl of CLIMBERS){
+  const nf2=(95*Q)|0;
+  for(let i=0;i<nf2;i++){
+    const z=cl.cz+gauss()*2.0, y=Math.min(0.5+Math.abs(gauss())*1.05,1.9);
+    fl(cl.sx+(R()-0.5)*0.34, y, z, 0.12+0.08*R(), [0.96,0.46,0.60], [148,192,268], 0);
+  }
+}
+FLP=0.8;
 // PATH-EDGE BORDER — flowers spilling along both sides of the path (cottage style).
 // keeps abundance in the central column → reads full even on a narrow phone screen.
 const FLOWERY=LIB.filter(s=>['nepeta','geranium','lobelia','allium','heuchera','brunnera','ajuga','pulmonaria','hellebore','crocus','daffodil'].includes(s.n));
@@ -490,16 +539,16 @@ for(let i=0;i<200 && S.length/FSTR<FMAX;i++){
     if(Math.abs(px-lpc)>0.92 && Math.abs(px)<bedEdgeJS(pz)+0.3 && pz<4.4 && !nearBath(px,pz)) emitSpecies(px,pz,sp);
   }
 }
-// naturalised SPRING BULBS — drifts of daffodils & snowdrops sweeping through the lawn
-const SNOW=LIB.find(s=>s.n==='snowdrop'), DAFF=LIB.find(s=>s.n==='daffodil'), CROC=LIB.find(s=>s.n==='crocus');
-for(let b=0;b<90 && S.length/FSTR<FMAX;b++){
-  const z=THREE.MathUtils.lerp(4.0,-12,Math.pow(R(),0.55));
-  const x=(R()*2-1)*bedEdgeJS(z)*0.92;
-  const sp=R()<0.45?DAFF:(R()<0.7?SNOW:CROC);            // daffodils + snowdrops, some crocus
-  const drift=5+(R()*8|0), rad=0.35+R()*0.7;
+FLP=0.45;                                             // mass bed fillers — thinned so they can't hog the floret buffer
+// plant drifts INTO the side beds — one species per drift (gardener's repetition), packed full
+for(let b=0;b<380 && S.length/FSTR<FMAX;b++){
+  const z=THREE.MathUtils.lerp(4.2,-13.5,Math.pow(R(),0.5));
+  const side=R()<0.5?-1:1, be=bedEdgeJS(z);
+  const cx=side*(be+0.2+R()*4.8), rad=THREE.MathUtils.lerp(0.45,1.4,R());
+  const sp=pickSpecies(), drift=3+(R()*7|0);
   for(let p=0;p<drift && S.length/FSTR<FMAX;p++){
-    const px=x+gauss()*rad, pz=z+gauss()*rad;
-    if(Math.abs(px-pathCJS(pz))>1.0 && Math.abs(px)<bedEdgeJS(pz)+4.0 && pz<4.2 && !nearBath(px,pz)) emitSpecies(px,pz,sp);
+    const px=cx+gauss()*rad, pz=z+gauss()*rad;
+    if(inBed(px,pz)) emitSpecies(px,pz,sp);
   }
 }
 const FN=S.length/FSTR, farr=Float32Array.from(S);
@@ -575,7 +624,7 @@ ${DAPPLE}
 const floor=new THREE.Mesh(fgeo,floorMat); floor.frustumCulled=false; scene.add(floor);
 
 // ── FLORETS — real flower forms (spikes / globes / umbels / mopheads) ─
-const FLN=Math.min(FL.length/FLSTR,55000*Q|0), flarr=Float32Array.from(FL);
+const FLN=Math.min(FL.length/FLSTR,110000*Q|0), flarr=Float32Array.from(FL);
 function fls(o,s){const a=new Float32Array(FLN*s);for(let i=0;i<FLN;i++)for(let j=0;j<s;j++)a[i*s+j]=flarr[i*FLSTR+o+j];return a;}
 const florQ=new THREE.PlaneGeometry(1,1);
 const flgeo=new THREE.InstancedBufferGeometry();
@@ -586,15 +635,16 @@ flgeo.setAttribute('iSize',new THREE.InstancedBufferAttribute(fls(3,1),1));
 flgeo.setAttribute('iCol',new THREE.InstancedBufferAttribute(fls(4,3),3));
 flgeo.setAttribute('iWin',new THREE.InstancedBufferAttribute(fls(7,3),3));
 flgeo.setAttribute('iSeed',new THREE.InstancedBufferAttribute(fls(10,1),1));
+flgeo.setAttribute('iKind',new THREE.InstancedBufferAttribute(fls(11,1),1));
 const florMat=new THREE.ShaderMaterial({transparent:true,depthTest:true,depthWrite:false,side:THREE.DoubleSide,
   uniforms:{day:{value:0},time:{value:0},camRight:{value:new THREE.Vector3()},camUp:{value:new THREE.Vector3()},
             fogColor:{value:FOG.clone()},fogNear:{value:9.0},fogFar:{value:95.0}},
-  vertexShader:`attribute vec3 iC,iCol,iWin; attribute float iSize,iSeed;
+  vertexShader:`attribute vec3 iC,iCol,iWin; attribute float iSize,iSeed,iKind;
     uniform float day,time; uniform vec3 camRight,camUp;
-    varying vec2 vUv; varying vec3 vCol; varying float vA,vFog,vSd;
+    varying vec2 vUv; varying vec3 vCol; varying float vA,vFog,vSd,vKind;
 ${WIND}
     float ws(float d,vec3 w){if(d<w.x||d>w.z)return 0.0;return smoothstep(w.x,w.y,d)*(1.0-smoothstep(w.y,w.z,d));}
-    void main(){ vUv=uv; vCol=iCol; vSd=iSeed;
+    void main(){ vUv=uv; vCol=iCol; vSd=iSeed; vKind=iKind;
       vec3 w2=vec3(iWin.x+iSeed*12.0-6.0, iWin.y, iWin.z);          // each floret opens at its own time
       float e=ws(day,w2)*(0.65+0.35*iSeed); vA=e;
       if(e<0.01){ gl_Position=vec4(2.0,2.0,2.0,1.0); return; }      // cull out of season
@@ -602,13 +652,33 @@ ${WIND}
       vec2 q=uv-0.5;
       vec3 world=iC + windOffset(iC,time,0.022) + camRight*(q.x*sc) + camUp*(q.y*sc);
       vec4 mv=viewMatrix*vec4(world,1.0); vFog=-mv.z; gl_Position=projectionMatrix*mv; }`,
-  fragmentShader:`precision highp float; varying vec2 vUv; varying vec3 vCol; varying float vA,vFog,vSd;
+  fragmentShader:`precision highp float; varying vec2 vUv; varying vec3 vCol; varying float vA,vFog,vSd,vKind;
     uniform vec3 fogColor; uniform float fogNear,fogFar;
     void main(){ vec2 d=vUv-0.5; float ang=atan(d.y,d.x), r=length(d);
-      float petal=0.5*(0.55+0.45*abs(cos(2.5*ang+vSd*30.0)));        // 5-petal flower silhouette
-      if(r>petal)discard;
-      float a=smoothstep(petal,petal-0.16,r)*vA; if(a<0.03)discard;
-      vec3 c=mix(vCol, vec3(1.0,0.95,0.6), smoothstep(0.15,0.0,r)*0.7); // warm flower centre
+      int K=int(vKind+0.5); vec3 c; float a;
+      if(K==1){                                                       // daffodil: 6-petal perianth + deep orange trumpet
+        float petal=0.5*(0.40+0.60*abs(cos(3.0*ang+vSd*30.0)));
+        if(r>petal)discard;
+        a=smoothstep(petal,petal-0.14,r)*vA;
+        vec3 peri=mix(vCol,vec3(1.0,0.97,0.72),0.35);
+        c=mix(vec3(1.0,0.58,0.06),peri,smoothstep(0.12,0.22,r));
+      } else if(K==2){                                                // snowdrop: narrow hanging white drop, green at the tip
+        float r2=length(d*vec2(2.1,1.05));
+        if(r2>0.5)discard;
+        a=smoothstep(0.5,0.32,r2)*vA;
+        c=mix(vec3(0.55,0.75,0.45),vec3(0.97,0.99,0.97),smoothstep(-0.44,-0.22,d.y));
+      } else if(K==3){                                                // crocus: upright cup, orange stamens glowing inside
+        float r2=length(d*vec2(1.5,1.0));
+        if(r2>0.5||d.y<-0.30)discard;
+        a=smoothstep(0.5,0.30,r2)*smoothstep(-0.30,-0.18,d.y)*vA;
+        c=mix(vec3(1.0,0.62,0.10),vCol,smoothstep(0.06,0.15,length(d-vec2(0.0,0.10))));
+      } else {                                                        // generic 5-petal
+        float petal=0.5*(0.55+0.45*abs(cos(2.5*ang+vSd*30.0)));
+        if(r>petal)discard;
+        a=smoothstep(petal,petal-0.16,r)*vA;
+        c=mix(vCol, vec3(1.0,0.95,0.6), smoothstep(0.15,0.0,r)*0.7);  // warm flower centre
+      }
+      if(a<0.03)discard;
       c=mix(c,fogColor,smoothstep(fogNear,fogFar,vFog));
       gl_FragColor=vec4(c,a); }`});
 const florets=new THREE.Mesh(flgeo,florMat); florets.frustumCulled=false; scene.add(florets);
@@ -753,6 +823,38 @@ const lightMat=new THREE.ShaderMaterial({transparent:true,depthTest:true,depthWr
       gl_FragColor=vec4(c*a,a); }`});
 const patioLights=new THREE.Points(lgeo2,lightMat); patioLights.frustumCulled=false; scene.add(patioLights);
 
+// ── NIGHT SKY — stars + moon fade in as the cycle reaches true darkness ─
+const NST=220;
+const stp=new Float32Array(NST*3), sts=new Float32Array(NST);
+for(let i=0;i<NST;i++){ stp[i*3]=(R()*2-1)*150; stp[i*3+1]=14+R()*75; stp[i*3+2]=-70-R()*65; sts[i]=R(); }
+const stGeo=new THREE.BufferGeometry();
+stGeo.setAttribute('position',new THREE.BufferAttribute(stp,3)); stGeo.setAttribute('sd',new THREE.BufferAttribute(sts,1));
+const starMat=new THREE.ShaderMaterial({transparent:true,depthTest:true,depthWrite:false,blending:THREE.AdditiveBlending,
+  uniforms:{night:{value:0},time:{value:0},dpr:{value:renderer.getPixelRatio()}},
+  vertexShader:`attribute float sd; uniform float night,time,dpr; varying float vA;
+    void main(){ float tw=0.55+0.45*sin(time*(1.5+sd*2.0)+sd*40.0);   // each star twinkles at its own rate
+      vA=night*tw*(0.35+0.65*sd);
+      vec4 mv=viewMatrix*vec4(position,1.0);
+      gl_Position=projectionMatrix*mv; gl_PointSize=(1.3+1.6*sd)*dpr; }`,
+  fragmentShader:`precision highp float; varying float vA;
+    void main(){ vec2 d=gl_PointCoord-0.5; float r=length(d); if(r>0.5)discard;
+      float a=smoothstep(0.5,0.05,r)*vA; if(a<0.01)discard;
+      gl_FragColor=vec4(vec3(7.0,7.2,8.0)*a,a); }`});   // HDR-bright: must survive the night grade
+const stars=new THREE.Points(stGeo,starMat); stars.frustumCulled=false; scene.add(stars);
+const moonMat=new THREE.ShaderMaterial({transparent:true,depthTest:true,depthWrite:false,blending:THREE.AdditiveBlending,
+  uniforms:{night:{value:0},dpr:{value:renderer.getPixelRatio()}},
+  vertexShader:`uniform float night,dpr; varying float vA;
+    void main(){ vA=night; vec4 mv=viewMatrix*vec4(position,1.0);
+      gl_Position=projectionMatrix*mv; gl_PointSize=54.0*dpr; }`,
+  fragmentShader:`precision highp float; varying float vA;
+    void main(){ vec2 d=gl_PointCoord-0.5; float r=length(d); if(r>0.5)discard;
+      float disc=smoothstep(0.16,0.13,r), halo=exp(-r*r*22.0)*0.35;
+      float a=(disc+halo)*vA; if(a<0.01)discard;
+      gl_FragColor=vec4(vec3(6.5,6.3,5.5)*a,a); }`});   // HDR-bright: must survive the night grade
+const moonGeo=new THREE.BufferGeometry();
+moonGeo.setAttribute('position',new THREE.BufferAttribute(new Float32Array([-16,38,-110]),3));
+const moon=new THREE.Points(moonGeo,moonMat); moon.frustumCulled=false; scene.add(moon);
+
 // ── POLLINATORS + petals ────────────────────────────────────────────
 function points(n,opts){
   const p=new Float32Array(n*3), sd=new Float32Array(n);
@@ -842,7 +944,8 @@ const presentMat=new THREE.ShaderMaterial({uniforms:postU,
       // day → golden dusk → cool evening (never full dark, twilight glow)
       vec3 dayT=vec3(1.0), duskT=vec3(1.22,0.84,0.55), eveT=vec3(0.60,0.68,0.92);
       vec3 tint = sun>0.5 ? mix(duskT,dayT,(sun-0.5)*2.0) : mix(eveT,duskT,sun*2.0);
-      float bright=mix(0.5,1.0,smoothstep(0.0,0.85,sun));
+      tint=mix(vec3(0.36,0.44,0.85),tint,smoothstep(0.02,0.25,sun));   // deep indigo at the bottom of the cycle
+      float bright=mix(0.5,1.0,smoothstep(0.0,0.85,sun))*mix(0.28,1.0,smoothstep(0.05,0.22,sun)); // commits to real darkness, not permanent twilight
       col*=tint*bright;
       col=aces(col*1.05); col=pow(col,vec3(0.94));
       float v=1.0-(1.0-sun)*0.28*smoothstep(0.1,1.2,length(vUv-vec2(0.5,0.62))); // soft evening vignette
@@ -875,8 +978,10 @@ function frame(t){
   grassMat.uniforms.camRight.value.copy(rr); grassMat.uniforms.time.value=tm;
   birdMat.uniforms.camRight.value.copy(_r); birdMat.uniforms.camUp.value.copy(_u); birdMat.uniforms.time.value=tm;
   fruitMat.uniforms.camRight.value.copy(_r); fruitMat.uniforms.camUp.value.copy(_u); fruitMat.uniforms.day.value=day;
-  const sun=(window.__sun!=null)?window.__sun:0.5+0.5*Math.sin(tm*0.085); // slow day → dusk → evening drift
+  const sun=(window.__sun!=null)?window.__sun:0.69+0.31*Math.sin(tm*0.085); // slow day → golden dusk drift (never below 0.38 — no darkness; full night still reachable via __sun for film)
   postU.sun.value=sun; lightMat.uniforms.sun.value=sun; lightMat.uniforms.time.value=tm;
+  const nightAmt=1.0-smooth(0.10,0.30,sun);
+  starMat.uniforms.night.value=nightAmt; starMat.uniforms.time.value=tm; moonMat.uniforms.night.value=nightAmt;
   water.material.uniforms.time.value=tm;
   groundU.time.value=tm;
   const leafOn=smooth(72,112,day)*(1-smooth(300,340,day));
@@ -894,6 +999,7 @@ function frame(t){
 }
 requestAnimationFrame(frame);
 window.__setDay=v=>{day=v;}; window.__pause=v=>{paused=v;};
+window.__dbg={strokes:FN, strokeCap:FMAX, florets:FL.length/FLSTR, floretsDrawn:FLN, leaves:NL};
 addEventListener('resize',()=>{ renderer.setSize(innerWidth,innerHeight);
   layout();
   postU.res.value.set(innerWidth,innerHeight);

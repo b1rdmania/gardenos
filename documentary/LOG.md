@@ -890,3 +890,45 @@ would have. Anchoring a prop physically (the posts) can be worse than removing t
 need for the anchor (drape the string against foliage).
 **Remaining:** zones A–D; bird landing on the bath rim; stars/moon at darkest dip;
 on-device mobile frame-rate check.
+
+---
+
+## Step 22 — Botanical truth: real bulb forms, cottage vocabulary, daylight master
+**Date:** 2026-06-10/11
+**Input (user):** "the plants that we had listed, do you want to model them a bit
+better, especially the daffodils and the spring layers? … it doesn't really look and
+feel like an English cottage garden, does it?" Then mid-build: "doesn't need darkness
+I don't think."
+**Decisions:**
+- **Per-floret KIND** (stride 11→12): daffodils are now a 6-petal perianth with a deep
+  orange trumpet; snowdrops are narrow hanging white drops with green tips; crocuses
+  are upright cups with orange stamens. Spring stops being generic 5-petal confetti.
+- **THE BUG OF THE STEP**: the floret buffer was generating **413k** florets and
+  silently truncating at the 55–75k cap — in emission order. Everything emitted late
+  (lawn bulbs, new cottage species) simply never rendered. Fix: thinned the mass
+  fillers (haze/globe/umbel/mophead halved, bed drifts emit florets at p=0.45),
+  **reordered emission so deliberate features draw first**, cap raised to 110k.
+  Lesson: a silent cap is a lie — features were "in the code" but not on screen.
+- **Cottage vocabulary**: hollyhocks stand against the fence lines; lavender edges the
+  path both sides; delphinium / lupin / shrub-rose joined the drift mix (rose wt 6);
+  **climbing roses clothe the fence panels** (leaf dabs into the canopy system + ~95
+  pink blooms per climber, 6 climbers). Bergenia/hellebore paddles shrunk + multiplied
+  (the agave look is gone). Bulb die-back greened (was reading as dead grey tufts).
+- **Porous blossom**: only 45% of dabs blossom and the size boost dropped — the apple
+  reads as flowering branches now, not a cotton ball.
+- **Night built, then parked**: full darkness grade + 220 twinkling stars + moon (HDR
+  ~7× values to survive the night grade — key trick). Andy: doesn't need darkness. The
+  auto cycle is now clamped **day ↔ golden dusk (sun 0.38–1.0)**; the whole night
+  system stays dormant behind `window.__sun` for film captures.
+**Artifact:** `../trial-13-flowerforms.html` → re-published (live verified).
+**LIVE:** **https://eternal-birch-wjhm.here.now/**
+**Captures:** `captures/step22-daffodil-spring.png` (daffodil drifts sweeping the
+path, porous blossom), `captures/step22-cottage-summer.png` (roses on the fences,
+lavender edging, mixed pink/white/blue border — it finally reads English cottage),
+`captures/step22-night-filmonly.png` (the parked night: moon between crowns, stars,
+festoon — film-only).
+**Learned:** "looks like an English cottage garden" is mostly *vocabulary + placement*,
+not rendering: climbers on the fence, spires against it, edging along the path. The
+silent floret cap was the real reason past planting changes under-delivered. Desktop
+30 fps with 110k florets drawn.
+**Remaining:** zones A–D; bird landing on the bath rim; on-device mobile perf.

@@ -4,7 +4,7 @@
  "subtitle": "A living canvas for ecological time, rendered as light",
  "thesis": "The artwork is not the flower but what the flower does over a year. The core unsolved problem: what does a plant mean when it stops being a flower and becomes a pixel?",
  "endForm": "gallery / installation piece",
- "updated": "2026-06-10",
+ "updated": "2026-06-11",
  "steps": [
   {
    "id": "00-reframe",
@@ -337,6 +337,23 @@
     "step21-winter-enclosure.png",
     "step21-dusk-festoon.png",
     "step21-maple-blazes.png"
+   ]
+  },
+  {
+   "id": "22-botanical-cottage",
+   "date": "2026-06-11",
+   "title": "Step 22 \u00b7 Real bulb forms, cottage vocabulary, daylight master",
+   "kind": "build",
+   "question": "Why doesn't it feel like an English cottage garden?",
+   "decision": "Per-floret kinds (daffodil trumpet / snowdrop drop / crocus cup); found+fixed the silent 413k->55k floret truncation (features now emit first); hollyhocks+lavender+delphinium+lupin+roses incl. fence climbers; porous blossom; night built then parked behind __sun - auto cycle clamped day<->golden dusk per Andy.",
+   "learned": "Cottage feel is vocabulary + placement (climbers on fence, spires against it, edging along path). A silently truncated buffer means features can be 'in the code' but never on screen.",
+   "artifacts": [
+    "trial-13-flowerforms.html (re-published)"
+   ],
+   "captures": [
+    "step22-daffodil-spring.png",
+    "step22-cottage-summer.png",
+    "step22-night-filmonly.png"
    ]
   }
  ],
