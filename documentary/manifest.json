@@ -355,6 +355,22 @@
     "step22-cottage-summer.png",
     "step22-night-filmonly.png"
    ]
+  },
+  {
+   "id": "23-bluesky-zones-insects",
+   "date": "2026-06-11",
+   "title": "Step 23 \u00b7 Blue sky, zones A-D, real insects, higher birds",
+   "kind": "build",
+   "question": "Make it feel like a fresh day; finish the zones; better wildlife.",
+   "decision": "Sky+fog shifted grey->blue; pickSpecies(z) depth-bends weights (woodland back / cottage front); terracotta pots with pelargoniums anchor the patio; butterflies got flapping wing lobes, bees striped bodies + wing blur; sky flock bigger and higher.",
+   "learned": "Atmosphere is cheaper than geometry - the fog/sky recolour did more for mood than any planting change. Zones emerge free once placement weights bend by depth.",
+   "artifacts": [
+    "trial-13-flowerforms.html (re-published)"
+   ],
+   "captures": [
+    "step23-bluesky-spring.png",
+    "step23-pots-zones-summer.png"
+   ]
   }
  ],
  "openThreads": [

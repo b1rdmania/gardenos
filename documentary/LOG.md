@@ -932,3 +932,34 @@ not rendering: climbers on the fence, spires against it, edging along the path. 
 silent floret cap was the real reason past planting changes under-delivered. Desktop
 30 fps with 110k florets drawn.
 **Remaining:** zones A–D; bird landing on the bath rim; on-device mobile perf.
+
+---
+
+## Step 23 — Blue sky, zones A–D, real insects, higher birds
+**Date:** 2026-06-11
+**Input (user):** "that looks really nice… do the rest of it… sky could be a little
+less grey, maybe some blue… bees and butterflies could probably be better… quite like
+the birds as they are, but maybe a little bit bigger or a little bit higher."
+**Decisions:**
+- **Blue sky** — sky gradient deepened (top 0.38/0.58/0.93) and the global FOG colour
+  shifted from grey-green to pale blue; the whole piece reads as a fresh summer day
+  instead of overcast. The biggest mood shift per character changed in the file.
+- **Zones A–D landed** (the last big MODEL.md move): `pickSpecies(z)` bends species
+  weights by depth — ferns/hellebores/foxgloves cluster in the shaded back (woodland,
+  zone B), roses/nepeta/delphiniums at the sunny front (zone A); the lawn was already
+  zone C; **terracotta patio pots with scarlet pelargoniums** (zone D) now anchor the
+  bottom corners by the viewer's feet — leaf-dab mounds + long-season florets.
+- **Real insects** — the banded-circle point sprites became shaped ones: butterflies
+  are two flapping wing lobes (per-insect flap phase) with a dark body and two-tone
+  wings; bees are striped round bodies with a blurred wing-pair above; hoverflies a
+  tiny dart. Sprites enlarged so the shapes read (bumble 19px, butterflies 23–24px).
+- **Birds** — sky flock raised (y≈12.5–19) and enlarged (0.5→0.85); bath birds
+  untouched (Andy likes them as they are).
+**Artifact:** `../trial-13-flowerforms.html` → re-published (live verified).
+**LIVE:** **https://eternal-birch-wjhm.here.now/**
+**Captures:** `captures/step23-bluesky-spring.png`, `captures/step23-pots-zones-summer.png`.
+**Learned:** atmosphere is cheaper than geometry — the fog/sky recolour did more for
+"feels like a nice day" than any planting change. Zones come almost free once placement
+is probabilistic: bend the weights by depth and communities emerge. 33 fps desktop.
+**Remaining:** bird landing on the bath rim (current perch/flight cycle may be enough);
+on-device mobile frame-rate check.

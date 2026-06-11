@@ -42,7 +42,7 @@ renderer.setPixelRatio(Math.min(devicePixelRatio, MOBILE?1.2:1.35));
 renderer.setSize(innerWidth,innerHeight);
 document.body.appendChild(renderer.domElement);
 
-const FOG=new THREE.Color(0.80,0.85,0.85);
+const FOG=new THREE.Color(0.78,0.85,0.93);
 const scene=new THREE.Scene();
 const cam=new THREE.PerspectiveCamera(62, innerWidth/innerHeight, 0.1, 400);
 // responsive framing: portrait phones get a wider FOV + pulled-back camera so the
@@ -92,7 +92,7 @@ const ZONE=`
 // ── SKY ─────────────────────────────────────────────────────────────
 const sky=new THREE.Mesh(new THREE.PlaneGeometry(900,360),
   new THREE.ShaderMaterial({depthWrite:false,
-    uniforms:{top:{value:new THREE.Color(0.50,0.65,0.82)},hor:{value:new THREE.Color(0.90,0.91,0.90)}},
+    uniforms:{top:{value:new THREE.Color(0.38,0.58,0.93)},hor:{value:new THREE.Color(0.82,0.88,0.96)}},
     vertexShader:`varying vec2 vUv; void main(){vUv=uv; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.);}`,
     fragmentShader:`precision highp float; varying vec2 vUv; uniform vec3 top,hor;
       void main(){ gl_FragColor=vec4(mix(hor,top,smoothstep(0.0,0.85,vUv.y)),1.0);}`}));
@@ -173,6 +173,15 @@ for(const sx of [-1,1]){
 // climbing roses clothe the fences — anchor points here, foliage + blooms emitted by the instanced systems
 const CLIMBERS=[];
 for(const side of [-1,1]) for(let k=0;k<3;k++) CLIMBERS.push({sx:side*9.55, cz:-3.5-k*7.5+R()*3});
+
+// ── PATIO POTS — terracotta by the viewer's feet (zone D: the patio) ─
+const POTS=[{x:-2.7,z:5.4,s:1.0},{x:2.5,z:5.2,s:1.25},{x:3.6,z:6.4,s:0.85}];
+for(const p of POTS){
+  const body=new THREE.Mesh(new THREE.CylinderGeometry(0.30*p.s,0.21*p.s,0.36*p.s,14),stoneMat(0x9c4f36));
+  body.position.set(p.x,0.18*p.s,p.z); scene.add(body);
+  const rim=new THREE.Mesh(new THREE.CylinderGeometry(0.33*p.s,0.31*p.s,0.09*p.s,14),stoneMat(0xa95a40));
+  rim.position.set(p.x,0.38*p.s,p.z); scene.add(rim);
+}
 // dark green mass behind the back hedge so its leaf-dabs read as a clipped surface
 // (without it the hedge floats as a detached cloud once the trees in front go bare)
 const hedgeBody=new THREE.Mesh(new THREE.PlaneGeometry(40,9.6),new THREE.ShaderMaterial({
@@ -289,6 +298,14 @@ for(const m of MASSES){
   if(m.apple){ growApple(m,mn); }
   else if(m.tree){ growTree(m,mn); }
   else { for(let i=0;i<mn;i++) leafAt(m.c[0]+gauss()*m.r[0], m.c[1]+gauss()*m.r[1], m.c[2]+gauss()*m.r[2], m); }
+}
+// pot pelargoniums — a tight evergreen leaf mound above each pot rim
+for(const p of POTS){
+  const n=(110*Q)|0;
+  for(let i=0;i<n;i++){
+    pushLeaf(p.x+gauss()*0.20*p.s, 0.44*p.s+Math.abs(gauss())*0.16*p.s, p.z+gauss()*0.20*p.s,
+      0.10+0.09*R(), [0.10,0.30,0.10],[0.10,0.30,0.10],[0.10,0.30,0.10], 0, 0, 0.65+0.45*R(), 0, 1);
+  }
 }
 // climbing-rose foliage — fine leaf dabs massed against the fence panels
 const CLG={g:[0.10,0.26,0.11], mid:[0.55,0.40,0.16], late:[0.45,0.28,0.12]};
@@ -494,8 +511,20 @@ function emitSpecies(cx,cz,sp){
       fpush(cx+dx,cz+dz,0.10+R()*0.08,0.26+R()*0.22,(R()*2-1)*0.7,0.6+R()*0.4,0.0,jit(sp.d,.012),jit(sp.l,.05),sp.fc,sp.win,1,sp.wk,sp.sl,sp.ev,sp.au);}
   }
 }
-const TOTW=LIB.reduce((a,s)=>a+s.wt,0);
-function pickSpecies(){let r=R()*TOTW; for(const s of LIB){r-=s.wt; if(r<=0)return s;} return LIB[0];}
+// ZONES: the back of the garden is woodland shade under the canopy; the front is the sunny cottage border.
+// Species weights bend by depth so drifts cluster into believable communities instead of confetti.
+const WOODLAND=new Set(['fern','hellebore','brunnera','pulmonaria','epimedium','solomons','foxglove','ajuga']);
+const SUNNY=new Set(['rose','nepeta','geranium','delphinium','lupin','allium','agapanthus','verbascum','ammi','lobelia']);
+function pickSpecies(z){
+  let tot=0; const ws=[];
+  for(const sp of LIB){
+    let w=sp.wt;
+    if(z<-7.5){ if(SUNNY.has(sp.n)) w*=0.25; if(WOODLAND.has(sp.n)) w*=3.0; }
+    if(z>-4.5){ if(WOODLAND.has(sp.n)) w*=0.3; if(SUNNY.has(sp.n)) w*=2.2; }
+    ws.push(w); tot+=w;
+  }
+  let r=R()*tot; for(let i=0;i<LIB.length;i++){ r-=ws[i]; if(r<=0) return LIB[i]; } return LIB[0];
+}
 const FMAX=36000*Q|0;
 FLP=1.0;                                               // deliberate features flower fully — emitted first so the cap never cuts them
 // naturalised SPRING BULBS — generous drifts of daffodils & snowdrops sweeping through the lawn
@@ -517,6 +546,14 @@ for(let i=0;i<26;i++){ const z=THREE.MathUtils.lerp(3.2,-23,R()), side=R()<0.5?-
 for(let i=0;i<30;i++){ const z=THREE.MathUtils.lerp(4.0,-13,i/29)+(R()-0.5)*0.3, side=i%2?-1:1;
   const px=pathCJS(z)+side*(1.04+R()*0.18);
   if(!nearBath(px,z)) emitSpecies(px, z, LAV); }
+// pot PELARGONIUMS flower scarlet from late spring to the frosts
+for(const p of POTS){
+  const n=(22*Q)|0;
+  for(let i=0;i<n;i++){
+    fl(p.x+gauss()*0.16*p.s, 0.52*p.s+Math.abs(gauss())*0.14*p.s, p.z+gauss()*0.16*p.s,
+       0.08+0.05*R(), [0.88,0.14,0.12], [118,190,300], 0);
+  }
+}
 // CLIMBING-ROSE blooms stud the fence climbers through summer (foliage dabs added with the canopy build)
 for(const cl of CLIMBERS){
   const nf2=(95*Q)|0;
@@ -545,7 +582,7 @@ for(let b=0;b<380 && S.length/FSTR<FMAX;b++){
   const z=THREE.MathUtils.lerp(4.2,-13.5,Math.pow(R(),0.5));
   const side=R()<0.5?-1:1, be=bedEdgeJS(z);
   const cx=side*(be+0.2+R()*4.8), rad=THREE.MathUtils.lerp(0.45,1.4,R());
-  const sp=pickSpecies(), drift=3+(R()*7|0);
+  const sp=pickSpecies(z), drift=3+(R()*7|0);
   for(let p=0;p<drift && S.length/FSTR<FMAX;p++){
     const px=cx+gauss()*rad, pz=z+gauss()*rad;
     if(inBed(px,pz)) emitSpecies(px,pz,sp);
@@ -779,7 +816,7 @@ const birdMat=new THREE.ShaderMaterial({transparent:true,depthTest:true,depthWri
       if(iLow<0.5){                                                   // sky flock drifting across
         float t=time*iSpeed+iSeed*40.0;
         float x=mod(iSeed*47.0+t*2.2, 70.0)-35.0;
-        c=vec3(x, 9.0+iSeed*5.0+sin(t*0.6+iSeed*6.0)*0.8, -16.0-iSeed*22.0);
+        c=vec3(x, 12.5+iSeed*6.5+sin(t*0.6+iSeed*6.0)*0.9, -16.0-iSeed*22.0);
       } else {                                                         // bath bird: perches, takes brief flights
         float ph=fract(time*0.045+iSeed*0.5);
         float fly=smoothstep(0.55,0.65,ph)*(1.0-smoothstep(0.8,0.9,ph));
@@ -787,7 +824,7 @@ const birdMat=new THREE.ShaderMaterial({transparent:true,depthTest:true,depthWri
         vec3 air=uBath+vec3(sin(time*1.6)*1.0,2.6,0.6);
         c=mix(rim,air,fly);
       }
-      float sz=iLow>0.5?0.26:0.5;
+      float sz=iLow>0.5?0.26:0.85;
       vec2 q=uv-0.5;
       vec3 world=c+camRight*(q.x*sz)+camUp*(q.y*sz);
       vec4 mv=viewMatrix*vec4(world,1.0); vFog=-mv.z; gl_Position=projectionMatrix*mv; }`,
@@ -882,11 +919,11 @@ const leafFall   =points(340,{xr:16,zn:4,zf:-28,topY:8.0,mode:0,cA:[0.9,0.5,0.12
 // ── VARIED FLIES — bumblebee / honeybee / hoverfly / butterflies ────
 // per-kind: size, two colours (banded), speed, bob, wander, motion mode, weight
 const FLYKINDS=[
-  {sz:13,cA:[0.95,0.78,0.18],cB:[0.12,0.10,0.07],sp:0.8,bob:2.0,wan:0.5,mode:0,w:0.20}, // bumblebee
-  {sz:6, cA:[1.0,0.82,0.30], cB:[0.55,0.40,0.12],sp:1.7,bob:3.2,wan:0.7,mode:0,w:0.30}, // honeybee
-  {sz:4, cA:[0.82,0.86,0.5], cB:[0.5,0.6,0.45], sp:2.6,bob:1.2,wan:0.35,mode:1,w:0.22}, // hoverfly (darty)
-  {sz:16,cA:[1.0,0.45,0.7],  cB:[0.55,0.65,1.0], sp:0.6,bob:1.4,wan:0.9,mode:2,w:0.16}, // pink/blue butterfly
-  {sz:15,cA:[1.0,0.72,0.18], cB:[0.95,0.38,0.12],sp:0.6,bob:1.5,wan:0.95,mode:2,w:0.12}, // orange butterfly
+  {sz:19,cA:[0.95,0.78,0.18],cB:[0.16,0.13,0.09],sp:0.8,bob:2.0,wan:0.5,mode:0,w:0.20}, // bumblebee
+  {sz:10,cA:[1.0,0.82,0.30], cB:[0.45,0.32,0.10],sp:1.7,bob:3.2,wan:0.7,mode:0,w:0.30}, // honeybee
+  {sz:6, cA:[0.82,0.86,0.5], cB:[0.5,0.6,0.45], sp:2.6,bob:1.2,wan:0.35,mode:1,w:0.22}, // hoverfly (darty)
+  {sz:24,cA:[1.0,0.45,0.7],  cB:[0.55,0.65,1.0], sp:0.6,bob:1.4,wan:0.9,mode:2,w:0.16}, // pink/blue butterfly
+  {sz:23,cA:[1.0,0.72,0.18], cB:[0.95,0.38,0.12],sp:0.6,bob:1.5,wan:0.95,mode:2,w:0.12}, // orange butterfly
 ];
 function pickFly(){let r=R(),a=0; for(const k of FLYKINDS){a+=k.w; if(r<=a)return k;} return FLYKINDS[1];}
 const NF=240*Q|0;
@@ -907,8 +944,8 @@ flg.setAttribute('cA',new THREE.BufferAttribute(fCA,3)); flg.setAttribute('cB',n
 const fliesMat=new THREE.ShaderMaterial({transparent:true,depthTest:true,depthWrite:false,
   uniforms:{time:{value:0},amt:{value:0},dpr:{value:renderer.getPixelRatio()},fogColor:{value:FOG.clone()},fogNear:{value:9.0},fogFar:{value:95.0}},
   vertexShader:`attribute float sd,fsz,fsp,fbob,fwan,fmode; attribute vec3 cA,cB;
-    uniform float time,amt,dpr; varying vec3 vcA,vcB; varying float vA,vFog;
-    void main(){ vec3 p=position; float s=sd*40.0, T=time*fsp;
+    uniform float time,amt,dpr; varying vec3 vcA,vcB; varying float vA,vFog,vMode,vT;
+    void main(){ vec3 p=position; float s=sd*40.0, T=time*fsp; vMode=fmode; vT=time*10.0+s;
       if(fmode<0.5){                                   // bee buzz around a flower
         p.x+=sin(T+s)*fwan+sin(T*0.5+s*1.7)*fwan*0.6; p.z+=cos(T*0.8+s)*fwan*0.7;
         p.y=0.55+abs(sin(T*fbob+s))*0.55;
@@ -921,11 +958,28 @@ const fliesMat=new THREE.ShaderMaterial({transparent:true,depthTest:true,depthWr
       vcA=cA; vcB=cB; vA=amt*(0.7+0.3*sin(time*1.3+s));
       vec4 mv=viewMatrix*vec4(p,1.0); vFog=-mv.z;
       gl_Position=projectionMatrix*mv; gl_PointSize=fsz*dpr*(8.0/max(0.5,-mv.z)); }`,
-  fragmentShader:`precision highp float; varying vec3 vcA,vcB; varying float vA,vFog;
+  fragmentShader:`precision highp float; varying vec3 vcA,vcB; varying float vA,vFog,vMode,vT;
     uniform vec3 fogColor; uniform float fogNear,fogFar;
-    void main(){ vec2 d=gl_PointCoord-0.5; if(length(d)>0.5)discard;
-      float a=smoothstep(0.5,0.22,length(d))*vA; if(a<0.03)discard;
-      vec3 c=mix(vcA,vcB, step(0.5,fract(gl_PointCoord.y*3.0)));   // banded body/wings
+    void main(){ vec2 q=gl_PointCoord-0.5; q.y=-q.y;
+      float a=0.0; vec3 c=vcA; int M=int(vMode+0.5);
+      if(M==2){                                                      // butterfly: two flapping wing lobes + dark body
+        float flap=0.35+0.6*abs(sin(vT*0.8));
+        vec2 w=vec2((abs(q.x)-0.22)/1.15, q.y/(0.95*flap));
+        float wing=1.0-smoothstep(0.15,0.21,length(w));
+        float body=(1.0-smoothstep(0.030,0.055,abs(q.x)))*(1.0-smoothstep(0.26,0.34,abs(q.y)));
+        a=max(wing,body)*vA;
+        c=mix(vcA,vcB,smoothstep(-0.15,0.25,q.y));                   // two-tone wings
+        c=mix(c,vec3(0.13,0.10,0.08),body);
+      } else if(M==1){                                               // hoverfly: tiny dart
+        float bod=1.0-smoothstep(0.10,0.16,length(q*vec2(1.2,2.4)));
+        a=bod*vA; c=mix(vcA,vcB,smoothstep(-0.1,0.1,q.x));
+      } else {                                                       // bee: striped round body + blurred wing pair above
+        float bod=1.0-smoothstep(0.24,0.32,length(q*vec2(1.1,1.5)));
+        float win=(1.0-smoothstep(0.08,0.15,length(vec2(abs(q.x)-0.14,(q.y-0.27)*1.5))))*0.55;
+        c=bod>0.01 ? mix(vcA,vcB,step(0.5,fract(q.x*4.2+0.25))) : vec3(0.93,0.95,1.0);
+        a=max(bod,win)*vA;
+      }
+      if(a<0.03)discard;
       c=mix(c,fogColor,smoothstep(fogNear,fogFar,vFog)*0.6);
       gl_FragColor=vec4(c,a); }`});
 const flies=new THREE.Points(flg,fliesMat); flies.frustumCulled=false; scene.add(flies);
